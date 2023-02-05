@@ -1,0 +1,1064 @@
+---
+title: "Denetimsiz İstatistiksel Öğrenme"
+author: "Fatih Emre Öztürk"
+date: '2022-06-14'
+output:
+  html_document:
+    toc: true
+---
+
+```{r include=FALSE}
+library(readr)
+library(cluster)
+library(clusterSim)
+library(factoextra)
+library(corrplot)
+library(stats)
+library(clustertend)
+library(psych)
+library(NbClust)
+library(clValid)
+library(plotly)
+library(fpc)
+library(mclust)
+library(dbscan)
+library(tidyverse)
+library(ggpubr)
+```
+
+```{r include=FALSE}
+wdbc <- read_csv("wdbc.data", col_names = FALSE)
+
+wdbc <- wdbc[1:12]
+
+colnames <- c("ID", "Diagnosis", "radius", "texture", "perimeter", "area", "smoothness", "compactness", "concavity", "concave.points", "symmetry", "fractal.dimension" )
+names(wdbc) <- colnames
+
+#clustering için son hali
+data <- wdbc[3:12]
+```
+
+# Tanımlayıcı İstatistikler
+
+```{r}
+summary(data)
+```
+
+Veri setinin tanımlayıcı istatistikleri incelendiğinde birçok değişkende mean ile median'ın birbirine yakın olduğu gözlemlenmiştir. Area değişkeni incelendiğinde aykırı değerlerin fazla olabileceği max değer ile 3. kartil değeri karşılaştırıldığında gözlemlenmiştir. Radius ve perimeter değişkeninde de Area gibi aykırı değerler gözlemlenebilir.
+
+```{r}
+round(apply(data, 2, sd), 3)
+
+```
+
+Standart sapmalar incelendiğinde bazı değişkenlerin standart sapmalarının fazla olduğu çıkarımında bulunulabilir. Standart sapması en çok olan Area iken en az olan ise Fractal Dimension olarak saptanmıştır.
+
+# Korelasyon Analizi
+
+```{r}
+corr <- cor(data, method = "pearson")
+corrplot(corr, method="color" )
+```
+
+Veri setindeki korrelasyon matrisi incelendiğinde, değişkenler arasındaki korelasyonun oldukça fazla olduğu gözlemlenmiştir. Radius, Perimeter ve Area değişkenlerinin birbirleri ile korelasyonları incelendiğinde 0.98'den fazla değerler görünüyor. Compactness, Concavity ve Concave Points değişkenleri arasındaki korrelasyon de 0.83 ve üzeri. Fractal Dimension değişkeni negatif korrelasyonu olan tek değişken. Radius, Perimeter ve Area değişkenleri ile -0.31'den daha fazla değerlerle korrelasyona sahip. Texture değişkeninin diğer tüm değişkenlerle korrelasyonu sıfıra oldukça yakın. Bu da oldukça ilginç çünkü diğer tüm değişkenlerde negatif veya pozitif korrelasyon bulunmakta. Hatta bazı değişkenler arasındaki korrelasyonlar yukarıda belirtildiği gibi oldukça fazla.
+
+# Kutu Grafikleri
+
+```{r}
+par(mfrow=c(2,5))
+boxplot(data$radius, main = "radius", col = "dodgerblue2")
+boxplot(data$texture, main = "texture", col = "dodgerblue2")
+boxplot(data$perimeter, main = "perimeter", col = "dodgerblue2")
+boxplot(data$area, main = "area", col = "dodgerblue2")
+boxplot(data$smoothness, main = "smoothness", col = "dodgerblue2")
+boxplot(data$compactness, main = "compactness", col = "dodgerblue2")
+boxplot(data$concavity, main = "concavity", col = "dodgerblue2")
+boxplot(data$concave.points, main = "concave points", col = "dodgerblue2")
+boxplot(data$symmetry , main = "symmetriy", col = "dodgerblue2")
+boxplot(data$fractal.dimension , main = "fractal dimension", col = "dodgerblue2")
+```
+
+
+Area değişkenin sağa çarpık, Radius değişkenin ise sola çarpık görülmektedir. Concave Points ve Concavity'nin normal dağılmadığı gözlemlenmektedir. Aykırı değerlerin fazlalığı bariz bir şekilde görülmektedir. Daha önce de vurgulanan değişkenlerdeki varyansın oldukça fazla olduğu görünmektedir.
+
+# Temel Bileşen Analizi
+
+```{r echo=FALSE}
+data.pca <- prcomp(data, center = TRUE, scale. = TRUE)
+summary(data.pca)
+
+```
+
+Temel bileşen analizinin özet değerleri incelendiğinde en uygun bileşen sayısının iki olabileceği düşünülebilir. 2 bileşendeki 0.7997 açıklayıcılığın, 3 bileşende 0.887'e çıkması göz ardı edilebilecek bir yükseliş. Standart deviation değeri incelendiğinde 0.88 yine, en uygun değer olarak görülmektedir. Ancak kesin bir karara varmak için Eigen değerleri ile Screeplot'a da bakılmak istenmektedir.
+
+```{r echo=FALSE}
+data.eigen <- eigen(corr)
+eigenvalues <- data.eigen$value
+eigenvalues
+```
+
+Eigen değerleri incelendiğinde de 1'e en yakın değer olan 3 bileşenin 0.8806 ile en uygun seçim olduğu söylenebilir; ancak iki bileşen de yine tercih edilebilecek bir değer olarak göze çarpmakta. Bu sebeple bu aşamada iki bileşen daha iyi gibi görülmekle birlikte kesin bir kanıya varılamamıştır.
+
+```{r echo=FALSE}
+fviz_eig(data.pca)
+```
+
+Screeplot incelendiğinde en uygun bileşen sayısı üç olarak görülmekte; ancak özet istatistiklerinde dikkat çeken Cumulative Proportion değerleri incelendiğinde iki bileşenin de düşünülebilir olması gözden kaçırılmak istenilmemektedir. Bu sebeple son bir kanıya varmak amacıyla bileşen sayısına otomatik olarak karar veren Psych paketindeki fa.paralel fonksiyonundan yararlanılmak istenilmiştir.
+
+```{r warning=FALSE}
+x <- fa.parallel(data, fm="pa", fa="both", n.iter=1)
+```
+
+fa.paralel fonksiyonunun yazı çıktısı incelendiğinde en uygun bileşen sayısının iki olduğunun önerisi görülmektedir. Cumulative Proportion değerleri ve üçüncü bileşenin Proportion of Varience değerinin ( 0.08 ) oldukça az olması gibi sebepler düşünüldüğünde en uygun bileşen sayısı olarak **2** seçilmiştir.
+
+```{r echo=FALSE}
+data.pca$rotation[,1:3]
+```
+
+Bileşenlerin hangi değişkenleri ifade ettiklerini içeren çıktı incelendiğinde; üçüncü bileşenin yalnızca Texture değişkenini ifade ettiği fark edilmiştir. Texture değişkeninin aykırılığını korrelasyon analizinde de görmek mümkündü. Hiçibr değişken ile anlamlı bir korelasyonu olmayan bu değişkenin bir başka bileşen ile ifade edilmesi anlaşılabilir.
+
+Tek bir değişken için bir bileşen eklemek, 0.9 açıklayıcılık maaliyeti ile düşünüldüğünde çok da mantıklı görülmemiştir. Bu da iki bileşen seçimi kararını destekleyen bir başka sav olarak dikkat çekmektedir. Bu karara varmak için Texture değişkeninin diğer değişkenlerle korelasyonunun azlığı da hesaba katılmıştır.
+
+```{r echo=FALSE}
+fit <- principal(data, x$ncomp, rotate="varimax") 
+fa.diagram(fit)
+```
+
+Bu görselden de görülebileceği üzere bileşenlerin ifade ettikleri değişkenler şu şekildedir: PC1 : Radius, Perimeter, Area, Concave Points, Concavity, Texture PC2 : Fractal Dimension, Smoothness, Compactness, Symmetry
+
+```{r echo=FALSE, warning=FALSE}
+fviz_pca_ind(data.pca,
+             col.ind = "cos2", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE   )
+```
+
+Gözlemlerin PC 1 ve PC 2 grafiğindeki katkıları incelendiğinde sağ üst ve sağ altta bir kısımda kümelenme görülmekte. Bu gözlemlerin benzer özellikler ifade ettiği söylenebilir. Örneğin en sol altta bulunan 79. gözlem değerleri incelendiğinde Radius ve Texture dışındaki bütün değişkenler için maksimuma yakın değerlere sahip olduğu görülebiliyor. Tam zıt ekseninde yer alan 569. gözlem değerleri incelendiğinde, Smoothness ve Concavity'de minimum değerleri sahipken, Texture değişkeninde ise 3. kartilin üzerinde bir değere sahip.
+
+```{r echo=FALSE, warning=FALSE}
+fviz_pca_var(data.pca,
+             col.var = "contrib", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     )
+```
+
+Değişkenlerin PCA grafiği incelendiğinde, pozitif korrelasyona sahip gözlemlerin aynı bölgeleri işaret ettiği söylenebilir. Örneğin Area, aynı bileşende olduğu Perimeter ile pozitif korelasyona sahipken; farklı bileşende olduğu Fractal Dimension ile negatif korrelasyona sahip. Değişkenlerin katkıları bu grafik sayesinde daha iyi görülebilir.
+
+```{r}
+cor(data.pca$x[,1],data.pca$x[,2])
+```
+
+PCA sonrası değişkenler arasında bir korelasyon kalmadığı saptanılmıştır.
+
+# Kümeleme Analizleri
+
+Veri setindeki korrelasyon oldukça fazla olduğu için analizde PCA yapılmış veri seti kullanılacaktır.
+
+```{r include=FALSE}
+pcadata <- predict(data.pca)[,1:2]
+```
+
+**Kümelenme Eğiliminin Ölçülmesi**
+
+```{r warning=FALSE}
+hopkins.data <- hopkins(pcadata, n = nrow(pcadata)-1)
+hopkins.data
+
+```
+
+Hopkins istatistiği, belirli bir veri setinin tekdüze dağılımdan üretilme olasılığını ölçerek veri kümesinin kümelenme eğilimini değerlendirmek için kullanılmaktadır.Bu veri seti için Hopkins değeri 0.20 olarak çıkmıştır. Bu da veri setinin kümelenebilir olduğunu göstermektedir.
+
+## K - Ortalamalar Kümeleme Algoritması
+
+### Optimal Küme Sayısının Belirlenmesi
+
+```{r echo=FALSE, warning=FALSE}
+fviz_nbclust(pcadata , kmeans, nstart = 25, iter.max = 200, method = "wss") +
+  labs(subtitle = "Dirsek Yöntemi") 
+
+```
+
+Dirsek Yöntemi grafiği incelendiğinde küme sayısı için kesin bir karar vermenin mümkün olmadığı söylenebilmekle birlikte, iki ve beş küme seçilebilir.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata, kmeans ,method = "silhouette")+
+  labs(subtitle = "Silhouette Grafiği") 
+
+```
+
+Silhouette grafiği incelendiğinde en yüksek silhouette değerinin ikide olduğu gözlemlenebilir. Bununla birlikte 3 küme de arada çok fark olmaması sebebi ile denenebilir.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata, kmeans ,nstart = 25, method = "gap_stat", nboot = 500)+
+  labs(subtitle = "Gap Grafiği") 
+```
+
+Nboot değerinin 500 olarak ayarlandığı Gap Statistics değeri de en uygun küme sayısının iki olduğunu işaret ediyor.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+nb <- NbClust(pcadata , distance = "euclidean", min.nc = 2,
+              max.nc = 9, method = "kmeans")
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(nb) + labs(subtitle ="NbClust Grafiği")
+```
+
+NbClust paketi çıktısı incelendiğinde 9 yöntemin 2 kümeyi önerdiği, 6 yöntemin ise 3 kümeyi önerdiği saptanılmıştır. Çoğunluk kuralı dikkate alındığında iki küme sayısının optimal küme olduğu kararına varılmıştır. Ancak üç, beş ve yedi küme için de denemeler yapılmıştır. Rapora eklenenler ise iki ve üç küme sayısı ile yapılan analizlerdir.
+
+5 küme için açıklayıcılık iki ve üç kümeye göre daha çok (76.3) çıkmasına rağmen Ortalama Silhouette değeri daha düşük (0.36) çıkmıştır. Ayrışma iki boyutta da çakışma olmadan gerçeklemiş ve küme eleman sayıları birbirine yakın çıkmıştır. Ancak label ve küme geçerliliği istatistiklerinin verdiği sonuçlar düşünüldüğünde rapora koyulmama kararı alınmıştır.
+
+7 küme için açıklayıcılık iki ve üç kümeye göre daha çok (82.1) çıkmasına rağmen Ortalama Silhouette değeri daha düşük (0.35) çıkmıştır. Ayrışma her iki boyutta da çakışma az olarak gerçekleşmiş ve küme eleman sayıları birbirine daha da yaklaşmıştır. Küme içi varyansları arasındaki fark azalmakla birlikte; label ve küme geçerliliği istatistiklerinin verdiği sonuçlar düşünüldüğünde rapora koyulmama kararı alınmıştır.
+
+### İki Küme İçin K - Ortalamalar
+
+```{r echo=FALSE}
+set.seed(1993)
+km_data <- kmeans(pcadata, 2, nstart=25) 
+print(km_data)
+```
+
+Birinci kümede 398 eleman varken; ikinci kümedeki eleman sayısı 171. Sırasıyla 1. ve 2. kümeler için küme içi kareler toplamı ise 1121.768 ve 1216.540 olarak saptanmıştır. Açıklayıcılık ise %48.5 olarak saptanılmıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(km_data, data = pcadata,
+             ellipse.type = "convex", 
+             star.plot = TRUE, 
+             repel = TRUE, 
+             ggtheme = theme_minimal()
+) + labs(subtitle = "İki boyutlu Küme Grafiği")
+```
+
+Küme grafiği incelendiğinde örtüşmenin olmadığı söylenebilir.Ayrışma yalnızca PC1'de gerçekleşmiş. Özellikle mavi renkle ifade edilen ikinci kümenin varyansının oldukça fazla olduğu görülmektedir.
+
+K - Ortalamar için küme geçerlilikleri bu aşamalarda yapılmış; ancak rapora eklenilmemiştir. İlerleyen aşamalarda yapılacak olan Küme Geçerliliği bölümünde K - Ortalamalar için çıkan Küme Geçerliliği İstatistikleri verilecek ve diğer algoritmalar ile karşılaştırılacaktır.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+k2m_data <- eclust(pcadata, "kmeans", k = 2, nstart = 25, graph = F)
+fviz_silhouette(k2m_data, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+sil <- k2m_data$silinfo$widths[, 1:3]
+neg_sil_index <- which(sil[, 'sil_width']<0)
+sil[neg_sil_index, , drop = FALSE]
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+km_stats <- cluster.stats(dist(pcadata), k2m_data$cluster)
+km_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, k2m_data$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+table(wdbc$Diagnosis, k2m_data$cluster)
+```
+
+```{r include=FALSE}
+diagnosis <- ifelse(wdbc$Diagnosis == "M",1,2 )
+cluster.stats(d = dist(data),diagnosis, k2m_data$cluster)$corrected.rand
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, k2m_data$cluster)$vi
+```
+
+### Üç Küme İçin K - Ortalamalar
+
+```{r echo=FALSE}
+set.seed(1993)
+k3m_data <- kmeans(pcadata, 3, nstart=25) 
+print(k3m_data) 
+```
+
+1, 2 ve 3. kümeler için küme eleman sayıları sırasıyla 117, 117 ve 335 olarak saptanmıştır. Sırasıyla 1, 2 ve 3. kümeler için küme içi kareler toplamı ise 620.5682, 455.6488 ve 634.0446 olarak saptanmıştır. Açıklayıcılık ise %62.3 olarak saptanılmıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+fviz_cluster(k3m_data, data = pcadata,
+             ellipse.type = "convex", 
+             star.plot = TRUE, 
+             repel = TRUE, 
+             ggtheme = theme_minimal()
+) + labs(subtitle = "İki boyutlu Küme Grafiği")
+```
+
+Küme grafiği incelendiğinde çakışma olmadığı gözlemlenebilir. Ayrışma hem PC1, hem de PC2'de gerçekleşmiştir. Özellikle mavi renkle ifade edilen üçüncü kümenin varyansının diğer kümelere kıyasla daha az olduğu söylenebilir. Üçüncü kümenin eleman sayısı en fazla olan küme olduğu düşünüldüğünde, bu oldukça dikkat çekmektedir.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+km3_data <- eclust(pcadata, "kmeans", k = 3, nstart = 25, graph = F)
+fviz_silhouette(km3_data, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+sil <- km3_data$silinfo$widths[, 1:3]
+neg_sil_index <- which(sil[, 'sil_width']<0)
+sil[neg_sil_index, , drop = FALSE]
+
+```
+
+```{r include=FALSE}
+k3m_stats <- cluster.stats(dist(pcadata), km3_data$cluster)
+k3m_stats$dunn
+
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, km3_data$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, km3_data$cluster)
+```
+
+```{r include=FALSE}
+diagnosis <- ifelse(wdbc$Diagnosis == "M",1,2 )
+cluster.stats(d = dist(data),diagnosis, km3_data$cluster)$corrected.rand
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, km3_data$cluster)$vi
+
+```
+
+## K - Medoids Kümeleme Algoritması
+
+### Optimal Küme Sayısına Karar Verilmesi
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata , pam, method = "wss") +
+  labs(subtitle = "Dirsek Yöntemi") 
+```
+
+Dirsek Yöntemi incelendiğinde bariz bir seçim yapmak kolay olmayacaktır. Dirsek oluşumuna en benzer kıvrımın ikinci kümede olduğu söylenilebilir.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata, pam ,method = "silhouette")+
+  labs(subtitle = "Silhouette Grafiği") 
+```
+
+Silhouette grafiği hiç şaşırtıcı olmayan bir şekilde iki kümeyi işaret ediyor. Ona en yakın değer olan üç değeri ile de arasındaki fark azınsanmayacak bir seviyede.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata, pam, method = "gap")+
+  labs(subtitle = "Gap Grafiği") 
+```
+
+Gap grafiği incelendiğinde de optimal küme sayısı olarak iki kümenin işaret edildiği söylenilebilir.
+
+Grafiği çizdirilen üç yöntem dikkate alındığında optimal küme sayısının iki olduğu kararına varılmıştır. Yapılan analizlerde 2, 3, 4 ve 5 küme için denemeler yapılmıştır. Ancak rapora yalnızca 2 ve 3 küme sayısı için yapılan analizler dahil edilmiştir.
+
+4 küme için yapılan analizde ayrışmanın her iki boyutta da gerçekleşdiği fark edilmiştir. 2 kümenin küme içi varyansı az iken, diğer iki kümenin küme içi varyansının orantısız şekilde fazla olduğu saptanılmıştır. Silhouette değerinin diğer bir ve iki kümeye kıyasla daha az (0.34) olması ve label düşünüldüğünde rapora koyulmama kararı alınmıştır.
+
+5 küme için yapılan analizde ayrışmanın her iki boyutta da gerçekleştiği fark edilmiştir. Yine iki kümenin küme içi varyansı diğer 3 kümeye kıyasla daha çok çıkmıştır. Silhouette değerinin gittikçe düşmesi (0.33) ve label düşünüldüğünde bu küme sayısı ile yapılan analizin de rapora konulmamasına karar verilmiştir.
+
+### 2 Küme için K - Medoids Kümeleme
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(1993)
+pam_data <- pam(pcadata,2)
+print(pam_data)
+```
+
+Küme elemanlarına bakıldığında birinci kümede 499 eleman varken; ikinci küme eleman sayısı 269 olarak görülmektedir. PC1 değişkeninin centroidi ( -2.3572, 0.3013 ) iken, PC2 değişkeninin centroidi ( 1.3586, 0.0376 ) olarak saptanmıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(pam_data,
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+
+```
+
+Grafik incelendiğinde çakışma gözlemlenmemiştir. Tıpkı iki kümeli k-ortalamalarda olduğu gibi; ayrışmanın yalnızca PC1 boyutunda gerçekleştiği görülmektedir. Kırmızı renk ile gösterilen birinci kümedeki varyansın daha fazla olduğu fark edilmiştir.
+
+```{r include=FALSE}
+p2m_data <- eclust(pcadata, "pam", k = 2, nstart = 25, graph = F)
+fviz_silhouette(p2m_data, palette = "jco",
+                ggtheme = theme_classic())
+
+
+```
+
+```{r include=FALSE}
+silp <- p2m_data$silinfo$widths[, 1:3]
+neg_silp_index <- which(silp[, 'sil_width']<0)
+silp[neg_silp_index, , drop = FALSE]
+
+
+```
+
+```{r include=FALSE}
+pam_stats <- cluster.stats(dist(pcadata), p2m_data$cluster)
+pam_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, p2m_data$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, p2m_data$cluster)
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, p2m_data$cluster)$corrected.rand
+
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, p2m_data$cluster)$vi
+
+```
+
+### Üç Küme için K- Medoids Kümeleme
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(1993)
+pam3_data <- pam(pcadata,3)
+print(pam3_data)
+```
+
+Küme elemanlarına bakıldığında birinci kümede 159, ikinci küme eleman sayısı 169, üçünkü kümede ise 241 eleman bulunmaktadır. Birinci kümenin centroidi (-2.8020980, 0.6466461), ikinci kümenin centroidi (0.7507288, -1.3117501) ve üçüncü kümenin centroidi (1.6697824, 0.6918928) olarak saptanılmıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(pam3_data,
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+```
+
+Küme grafiği incelendiğinde çakışma gözlemlenmiştir. Ayrışmanın hem PC1, hem de PC2 boyutunda gerçekleştiği görülmektedir. Kırmızı renk ile gösterilen birinci kümedeki varyans fazla iken; mavi renkle ifade edilen üçüncü kümedeki varyans azdır.
+
+```{r include=FALSE}
+p3m_data <- eclust(pcadata, "pam", k = 3, nstart = 25, graph = F)
+fviz_silhouette(p3m_data, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silp3 <- p3m_data$silinfo$widths[, 1:3]
+neg_silp3_index <- which(silp3[, 'sil_width']<0)
+silp3[neg_silp3_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+pam3_stats <- cluster.stats(dist(pcadata), p3m_data$cluster)
+pam3_stats$dunn
+ 
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, p3m_data$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, p3m_data$cluster)
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, p3m_data$cluster)$corrected.rand
+
+
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, p3m_data$cluster)$vi
+
+```
+
+## Aşamalı Kümeleme Algoritması
+
+### Ward's Minimum Variance Method
+
+Aşamalı Kümelemeye Wards linkage yöntemi ile başlanılacaktır. Hem euclidean, hem de manhattan uzaklık metriğine göre aşamalı kümeleme uygulanacak ve dendogramlar görselleştirilecektir. Ardından kümelemelerin kojenetik uzaklıkları ölçülecektir. Orijinal uzaklık ile kojenetik uzaklık arasındaki korelasyon incelenip hangi uzaklık metriği ile ilerlenileceğine karar verilecektir.
+
+```{r}
+dist_euc <- dist(pcadata, method="euclidean")
+dist_man <- dist(pcadata, method="manhattan")
+```
+
+**Euclidean Uzaklık Metriği**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_e <- hclust(d=dist_euc, method="ward.D2")
+fviz_dend(hc_e,cex=.5) 
+```
+
+**Manhattan Uzaklık Metriği**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_m <- hclust(d=dist_man, method="ward.D2")
+fviz_dend(hc_m,cex=.5) 
+```
+
+İki dendogram incelendiğinde çok büyük bir farklılık görülmemektedir. Ancak yükseklik değerleri incelendiğinde Euclidean uzaklık metriği ile yapılan aşamalı kümelemenin daha düşük yükseklik değerleri ile ayrıldığını fark etmek mümkündür. Daha sağlıklı yorumlama yapabilmek amacıyla kojenetik distance değerlerini bulmak mantıklı olacaktır.
+
+```{r}
+coph_e <- cophenetic(hc_e)
+cor(dist_euc,coph_e)
+```
+
+Euclidean uzaklık metriği ile yapılan aşamalı kümelemenin orijinal uzaklık ile kojenetik uzaklık arasındaki korelasyon değeri 0.67 çıkmıştır. 0.75 ve üzeri korelasyon değerlerinin daha geçerli bir kümeleme olduğu sonucuna varıldığı düşünüldüğünde, bu değerin iyi olmadığı sonucuna varılabilir. Ancak daha iyi bir yorum yapmak için Manhattan uzaklık ölçütü ile yapılan aşamalı kümelemenin de kojenetik uzaklık değerine ulaşmak gerekmektedir.
+
+```{r}
+coph_m <- cophenetic(hc_m)
+cor(dist_man,coph_m)
+```
+
+Manhattan uzaklık metriği ile yapılan aşamalı kümelemenin orijinal uzaklık ile kojenetik uzaklık arasındaki korelasyon değeri 0.60 çıkmıştır. 0.75 ve üzeri korelasyon değerlerinin daha geçerli bir kümeleme olduğu sonucuna varıldığı düşünüldüğünde, bu değerin iyi olmadığı sonucuna varılabilir. Euclidean distance ile yapılan kojenetik uzaklık korelasyonunun daha iyi çıkması sebebiyle, aşamalı kümeleme yönteminin Ward linkage ile yapılan kümelemesinde Euclidean Distance metriği ile ilerlenme kararı verilmiştir.
+
+#### Optimal Küme Sayısının Belirlenmesi
+
+```{r include=FALSE}
+nbward <- NbClust(pcadata , distance = "euclidean", min.nc = 2,
+              max.nc = 9, method = "ward.D2")
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(nbward) + labs(subtitle ="NbClust Grafiği")
+```
+
+NbClust paketinden yararlanılarak çizdirilen grafikte en çok önerilen küme sayısı iki olarak saptanmıştır. Dendogramlar incelendiğinde benzer bir çıkarımda bulunmak mümkündür. 2,3 ve 6 küme için aşamalı kümeleme yapılmış; ancak rapora yalnızca 2 ve 3 kümelemenin sonucu eklenmiştir.
+
+6 küme için yapılan analizde ayrışmanın her iki boyutta da gerçekleştiği ama bazı kümelerde çakışmaların olduğu saptanmştır. Küme eleman sayıları birbirine yakın olmasına rağmen, iki kümenin küme içi varyansının diğer dört kümeye kıyasla daha fazla olduğu fark edilmiştir. Silhouette değerinin daha düşük (0.32) olması ve label düşünüldüğünde rapora koyulmama kararı alınmıştır.
+
+#### 2 Küme için Ward
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grupward2 <- cutree(hc_e, k = 2)
+table(grupward2)
+```
+
+İki küme için yapılan kümeleme sonucunda birinci kümede 180, ikinci kümede 389 eleman olduğu saptanılmıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e, k = 2, 
+          cex = 0.5, 
+          color_labels_by_k = TRUE, 
+          rect = TRUE )
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = pcadata, cluster = grupward2),
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+Küme Grafiği incelendiğinde, ayrışmanın yine yalnızca PC1 boyutunda gerçekleştiği gözlemlenmiştir. Mavi renkle gösterilen ikinci kümenin varyansının birinci kümeye göre daha az olduğu hem dendogramda, hem de kümeleme grafiğinde gözlemlenmiştir. Kümeler arasındaki çakışma dikkat çekmektedir.
+
+```{r include=FALSE}
+hc_dataward2 <- eclust(pcadata, "hclust", k = 2, hc_metric = "euclidean",hc_method = "ward.D2", graph = TRUE)
+
+```
+
+```{r include=FALSE}
+fviz_silhouette(hc_dataward2, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silward2 <- hc_dataward2$silinfo$widths[, 1:3]
+neg_silward2_index <- which(silward2[, 'sil_width']<0)
+silward2[neg_silward2_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+ward2_stats <- cluster.stats(dist(pcadata), hc_dataward2$cluster)
+ward2_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, hc_dataward2$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, hc_dataward2$cluster)
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupward2)$corrected.rand
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupward2)$vi
+```
+
+#### 3 Küme için Ward
+
+```{r echo=FALSE}
+grupward3 <- cutree(hc_e, k = 3)
+table(grupward3)
+```
+
+Üç küme için yapılan kümeleme sonucunda birinci kümede 104, ikinci kümede 76 ve üçüncü kümede 389 eleman olduğu saptanılmıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e, k = 3, 
+          cex = 0.5, 
+          color_labels_by_k = TRUE, 
+          rect = TRUE )
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = pcadata, cluster = grupward3),
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+Küme grafiği incelendiğinde, ayrışmanın hem PC1, hem de PC2 boyutunda olduğu saptanılmıştır. Kırmızı renkle gösterilen birinci kümedeki değişim fazla iken; yeşil renkle gösterilen ikinci kümedeki varyansın az olduğu hem grafik, hem de dendogramdan saptanılmıştır. Kümeler arasındaki örtüşmenin fazla olduğu gözlemlenmiştir.
+
+```{r include=FALSE}
+
+hc_dataward3 <- eclust(pcadata, "hclust", k = 3, hc_metric = "euclidean",hc_method = "ward.D2", graph = TRUE)
+```
+
+```{r include=FALSE}
+fviz_silhouette(hc_dataward3, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silward3 <- hc_dataward3$silinfo$widths[, 1:3]
+neg_silward3_index <- which(silward3[, 'sil_width']<0)
+silward3[neg_silward3_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+ward3_stats <- cluster.stats(dist(pcadata), hc_dataward3$cluster)
+ward3_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, hc_dataward3$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, hc_dataward3$cluster)
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupward3)$corrected.rand
+
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupward3)$vi
+```
+
+### Average Linkage Method
+
+Aşamalı Kümelemeye Wards linkage yöntemi ile başlanılacaktır. Hem euclidean, hem de manhattan uzaklık metriğine göre aşamalı kümeleme uygulanacak ve dendogramlar görselleştirilecektir. Ardından kümelemelerin kojenetik uzaklıkları ölçülecektir. Orijinal uzaklık ile kojenetik uzaklık arasındaki korelasyon incelenip hangi uzaklık metriği ile ilerlenileceğine karar verilecektir.
+
+**Euclidean Uzaklık Metriği ile**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_e2 <- hclust(d=dist_euc, method="average")
+fviz_dend(hc_e2,cex=.5) 
+```
+
+**Manhattan Uzaklık Metriği ile**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_m2 <- hclust(d=dist_man, method="average")
+fviz_dend(hc_m2,cex=.5) 
+```
+
+İki dendogram incelendiğinde çok büyük bir farklılık görülmemektedir. Ancak yükseklik değerleri incelendiğinde Euclidean uzaklık metriği ile yapılan aşamalı kümelemenin daha düşük yükseklik değerleri ile ayrıldığını fark etmek mümkündür. Daha sağlıklı yorumlama yapabilmek amacıyla kojenetik distance değerlerini bulmak mantıklı olacaktır.
+
+```{r echo=FALSE}
+coph_e2 <- cophenetic(hc_e2)
+cor(dist_euc,coph_e2)
+```
+
+Euclidean uzaklık metriği ile yapılan aşamalı kümelemenin orijinal uzaklık ile kojenetik uzaklık arasındaki korelasyon değeri 0.80 çıkmıştır. 0.75 ve üzeri korelasyon değerlerinin daha geçerli bir kümeleme olduğu sonucuna varıldığı düşünüldüğünde, bu değerin iyi olduğu sonucuna varılabilir. Ancak daha iyi bir yorum yapmak için Manhattan uzaklık ölçütü ile yapılan aşamalı kümelemenin de kojenetik uzaklık değerine ulaşmak gerekmektedir.
+
+```{r echo=FALSE}
+coph_m2 <- cophenetic(hc_m2)
+cor(dist_man,coph_m2)
+```
+
+Manhattan uzaklık metriği ile yapılan aşamalı kümelemenin orijinal uzaklık ile kojenetik uzaklık arasındaki korelasyon değeri 0.75 çıkmıştır. 0.75 ve üzeri korelasyon değerlerinin daha geçerli bir kümeleme olduğu sonucuna varıldığı düşünüldüğünde, bu değerin iyi olduğu sonucuna varılabilir. Euclidean distance ile yapılan kojenetik uzaklık korelasyonunun daha iyi çıkması sebebiyle, aşamalı kümeleme yönteminin Average linkage ile yapılan kümelemesinde Euclidean Distance metriği ile ilerlenme kararı verilmiştir.
+
+#### Optimal Küme Sayısının Belirlenmesi
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+nbaverage <- NbClust(pcadata , distance = "euclidean", min.nc = 2,
+              max.nc = 9, method = "average")
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(nbaverage) + labs(subtitle ="NbClust Grafiği")
+```
+
+NbClust paketinden yararlanılarak çizdirilen grafikte en çok önerilen küme sayısı beş olarak saptanmıştır. Dendogramlar incelendiğinde benzer bir çıkarımda bulunmak mümkündür. 2,5 ve 7 küme için aşamalı kümeleme yapılmış; ancak rapora yalnızca 2 ve 5 kümelemenin sonucu eklenmiştir.
+
+7 küme sayısı ile yapılan kümelemede küme eleman sayıları arasındaki fark çok fazla çıkmıştır. Bazı küme sayı elemanları oldukça az(3) çıkmasına rağmen, bazı kümelerin eleman sayıları oldukça fazla (305) çıkmıştır. Küme içi varyansların ise dengesiz olduğu saptanmıştır. Ortalama Silhouette değeri (0.41) ve diğer ölçütler düşünüldüğünde rapora eklenmeme kararı alınmıştır.
+
+#### 2 Küme için Average
+
+```{r echo=FALSE}
+grupav2 <- cutree(hc_e2, k = 2)
+
+table(grupav2)
+
+```
+
+Kümeleme sonucunda ilk kümenin 23, ikinci kümenin ise 546 elemanı olduğu sonucuna varılmıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e2, k = 2, 
+          cex = 0.5, 
+          color_labels_by_k = TRUE, 
+          rect = TRUE )
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = pcadata, cluster = grupav2),
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+Küme grafiği incelendiğinde ayrışmanın yalnızca PC1 boyutunda gerçekleştiği gözlemlenmiştir. Mavi renkle gösterilen ikinci kümede hem eleman sayısı, hem de varyans kırmızı renkle gösterilen birinci kümeye kıyasla daha fazladır. Bu ayrıma hem dendogramdan, hem de küme grafiğinden ulaşılabilir. Çakışmanın da az da olsa var olduğu belirtilmelidir.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_datav2 <- eclust(pcadata, "hclust", k = 2, hc_metric = "euclidean",hc_method = "average", graph = TRUE)
+```
+
+```{r include=FALSE}
+fviz_silhouette(hc_datav2, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silav2 <- hc_datav2$silinfo$widths[, 1:3]
+neg_silav2_index <- which(silav2[, 'sil_width']<0)
+silav2[neg_silav2_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+av2_stats <- cluster.stats(dist(pcadata), hc_datav2$cluster)
+av2_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, hc_datav2$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, hc_datav2$cluster)
+
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupav2)$corrected.rand
+```
+
+```{r include=FALSE}
+
+cluster.stats(d = dist(data),diagnosis, grupav2)$vi
+```
+
+#### 5 Küme için Average
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grupav5 <- cutree(hc_e2, k = 5)
+
+table(grupav5)
+```
+
+Kümeleme sonucunda 1, 2, 3, 4 ve 5 kümelerin eleman sayıları sırasıyla 16, 105, 5, 436, 7 şeklinde olduğu sonucuna varılmıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e2, k = 5, 
+          cex = 0.5, 
+          color_labels_by_k = TRUE, 
+          rect = TRUE )
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = pcadata, cluster = grupav5),
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+Küme grafiği incelendiğinde ayrışmanın hem PC1, hem de PC2 boyutunda gerçekleştiği gözlemlenmiştir. Yeşil renk ile gösterilen 3. küme ile mor renkle gösterilen 5. kümede varyansın oldukça az olduğu saptanmıştır. Varyansın azlığının bir sebebi de küme eleman sayılarının oldukça az olmasıdır. Aksine, mavi renkle gösterilen 4. kümede eleman sayısı ve varyans diğer kümelere kıyasla daha fazla olarak gözlemlenmiştir.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+hc_datav5 <- eclust(pcadata, "hclust", k = 5, hc_metric = "euclidean",hc_method = "average", graph = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+fviz_silhouette(hc_datav5, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silav5 <- hc_datav5$silinfo$widths[, 1:3]
+neg_silav5_index <- which(silav5[, 'sil_width']<0)
+silav5[neg_silav5_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+av5_stats <- cluster.stats(dist(pcadata), hc_datav5$cluster)
+av5_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, hc_datav5$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+## Model Temelli Kümeleme
+
+Model temelli kümeleme EM ile tahmin yaparak kümeleme işlemini gerçekleştirir. Her k, ortalamaya yakın noktalar için artan yoğunlukla ortalamada merkezlenir. Fonksiyon içinde yer alan G argümanı, k sayısını belirlemek için değişiklik yapılmasına olanak sağlar. 1 ile 9 arasında değerler alır. Her bir değer denenmiş; ancak en iyi sonucu veren G değerinin iki olduğu sonucuna ulaşılmıştır.
+
+G'nin üç değeri için yapılan analizlerde ilk iki küme eleman sayısının birbirine yakın (235-212) olmasına rağmen, üçüncü eleman sayısının daha az (122) olduğu sonucuna ulaşılmıştır. En iyi model hacmi değişik, şekli ve yönelimi benzer anlamına gelen VII modeli çıkmıştır. Çizdirilen uncertainty grafiğinde, kararsız gözlemlerin sayısının çok olması ve Ortalama Silhouette değerinin daha düşük (0.27) olması sebebiyle bu yöntem rapora eklenmemiştir.
+
+G'nin dört değeri için yapılan analizlerde küme sayıları sırasıyla 52, 158, 213, 146 olarak saptanılmıştır. En iyi model hacmi değişik, şekli ve yönelimi benzer anlamına gelen VII modeli çıkmıştır. Çizdirilen uncertainty grafiğinde, kararsız gözlemlerin sayısının çok olması ve Ortalama Silhouette değerinin daha düşük (0.33) olması sebebiyle bu yöntem rapora eklenmemiştir.
+
+G'nin beş değeri için yapılan analizlerde küme sayıları sırasıyla 29, 112, 187, 114, 127 olarak saptanılmıştır. En iyi model hacmi değişik, şekli ve yönelimi benzer anlamına gelen VII modeli çıkmıştır. Çizdirilen uncertainty grafiğinde, kararsız gözlemlerin sayısının çok olması ve Ortalama Silhouette değerinin daha düşük (0.32) olması sebebiyle bu yöntem rapora eklenmemiştir.
+
+```{r}
+mc <- Mclust(pcadata)
+summary(mc)
+```
+
+Model temelli kümeleme sonucunda veri seti iki kümeye ayrılmıştır. 1 ve 2 küme için küme eleman sayıları şu şekildedir: 253, 316.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_mclust(mc, "BIC", palette = "jco")
+```
+
+En iyi model olarak VVI parametresi çıkmaktadır. VVV; hacmi ve şekli değişik, yönelimi benzer anlamına gelmektedir.
+
+```{r message=FALSE, warning=FALSE}
+fviz_mclust(mc, "uncertainty", palette = "jco",pos = FALSE)
+```
+
+Belirsizlik grafiğinde daha büyük noktalarla ifade edilen gözlemlerin kümeleme sonuçlarının daha belirsiz olduğu ifade edilir. İki küme arasında belirsizliğin arttığı gözlemlenebilir. İlginç bir şekilde en sağda bulunan ve birinci kümeye ait olan bir gözlem belirsiz olarak görünmektedir.
+
+## Yoğunluk Bazlı Kümeleme
+
+Yoğunluk bazlı kümelemede küme sayısının önceden belirlenmesi gerekmemektedir; ancak MinPts ve eps değerlerinin önceden belirlenmesi gerekmektedir. eps parametresi, x noktasının çevresindeki komşuların yarıçapını tanımlar. Buna x'in epsilon komşuluğu denir. MinPts parametresi, "eps" yarıçapı içindeki minimum komşu sayısıdır. Bu değerlere karar vermek için KNN distplot kullanılabilir.
+
+### kNN Distplot
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+kNNdistplot(pcadata, k = 10)
+abline(h = 1, lty = 2)
+abline(h = 0.6, lty = 2)
+```
+
+k, MinPts'i ifade etmektedir. Yapılan çeşitli denemeler sonrasında 10'a karar verilmiştir. kNNdisplot incelenirken, tıpkı Dirsek Yöntemi gibi, çizginin "dirsek" yaptığı nokta saptanılmalıdır. Bu nokta eps değeri olarak seçilmelidir. Çeşitli denemeler sonucunda en uygun değerin 1 olduğuna karar verilmiştir. Fakat uygulanan kümeleme sonuçları beğenilmediği için en iyi sonuç veren eps değeri olarak 0.6 seçilmiştir.
+
+MinPts 10, eps 1 ile yapılan analizlerde küme sayısı bir olarak çıkmıştır. Bir küme, hiç küme anlamına geldiği için rapora eklenilmeme kararı alınmıştır.
+
+MinPts 10, eps 0.8 ile yapılan analizlerde de eps 1 ile yapılan analiz ile aynı sonuç vermesi sebebiyle rapora eklenmeme karar alınımştır.
+
+MinPts 5, eps 0.6 ile yapılan analizlerde küme sayısı iki olarak çıkmıştır. Birinci kümede 513 eleman varken ikinci küme eleman sayısının 7 çıkması ve bu dengesizliğin getirmiş olduğu varyans farkları şüpheye sebebiyet vermiştir. Bu sebeple rapora koyulmamıştır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+db <- fpc::dbscan(pcadata, eps = 0.6, MinPts = 10)
+print(db)
+```
+
+Yoğunluk bazlı kümeleme veri setini iki kümeye ayırmıştır. Çıktı incelendiğinde toplam 96 gürültü değer görülmemektedir. Birinci kümede 58, ikinci kümede 27 sınır noktası bulunmaktadır. Birinci kümede 49, ikinci kümede 339 çekirdek nokta bulunmaktadır.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(db, data = pcadata, stand = FALSE,
+             ellipse = FALSE, show.clust.cent = FALSE,
+             geom = "point",palette = "jco", ggtheme = theme_classic())
+```
+
+Grafik incelendiğinde kümeler arasındaki eleman farkının az olduğu görülmektedir. Gürültü değerlerin fazlalığı da dikkat çekmektedir.
+
+# Küme Geçerliliği
+
+Kümeleme sonrası yapılan geçerlilik ölçümleri paylaşılmadan önce clValid paketinde yer alan clValid fonksiyonundan yararlanılmak istenilmiştir. Bu fonksiyon verilen kümeleme yöntemleri ile kümeleme gerçekleştirerek en uygun kümeleme algoritması ve küme sayısının önerisini yapmaktadır. Üç geçerlilik ölçütü için bu fonksiyondan yararlanılacaktır. Bu ölçütler dahili (internal) ve harici(external) küme geçerliliği ile kümeleme kararlılığı(stability) olacaktır.
+
+## clValid
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+clmethods <- c("kmeans","pam","hierarchical", "model")
+intern <- clValid(pcadata, nClust = 2:6,
+                  clMethods = clmethods, validation = "internal")
+summary(intern)
+```
+
+Dahili kümeleme geçerliliği ölçütleri Connectivity, Dunn ve Silhouette ölçütlerini içermektedir. Bu ölçütlere her kümeleme sonrasında zaten bakılmıştı. clValid fonksiyonu bu ölçütler çerçevesinde en uygun algoritma olarak hiyerarşik kümelemeyi, optimal küme sayısı olarak ise 2 kümeyi işaret etmektedir.
+
+## Tüm Ölçütler
+
+```{r}
+kumegecerliligi <- data.frame( "Kümeleme Algoritması" <- c("K - Ortalamalar 2", "K - Ortalamalar 3", "K - Medoids 2", "K - Medoids 3", " Aşamalı - Ward.D2 2", "Aşamalı - Ward.D2 3", "Aşamalı - Average 5", "Aşamalı - Average 2", "Model Temelli", "Yoğunluk Temelli"),
+                               "Küme Sayısı" <- c(2,3,2,3,2,3,5,2,2,2),
+                               "Örtüşme" <- c("Az", "Çok", "Az", "Çok", "Az", "Çok", "Çok", "Az", "Yok", NA),
+                               "Negatif Silhouette Değeri" <- c(10,9,26,47,24,30,52,29, NA, NA),
+                               "Ortalama Silhouette Değeri" <- c(0.49, 0.44, 0.48, 0.36,0.48,0.48,0.42,0.54, 0.41,0.39),
+                               "Dunn Değeri" <- c(0.005,0.011, 0.013, 0.004, 0.02, 0.035, 0.029, 0.063, 0.002, 0.005),
+                               "Connectivity Değeri" <- c(64.96, 87.85, 50.08, 109.02, 40.70, 60.24, 68.88, 20.61, 83.61, 160.89),
+                               "Rand Değeri" <- c(0.64, 0.49, 0.72, 0.39, 0.56, 0.51, 0.44, 0.60, 0.53, 0.48),
+                               "VI Değeri" <- c(0.56, 0.93, 0.49, NA, 0.70, 0.86, 0.80, 0.74, 0.75, 0.96),
+                               "Label" <- c(55,146,42,194,70,127,189,111,77,142) 
+)
+colnaames <- c("Kümeleme Algoritması", "Küme Sayısı", "Örtüşme", "Negatif Silhouette Değeri", "Ortalama Silhouette Değeri", "Dunn Değeri", "Connectivity Değeri", "Rand Değeri", "VI Değeri", "Label")
+names(kumegecerliligi) <- colnaames
+kumegecerliligi
+```
+
+## En İyi Algoritma ve Optimal Küme Sayısının Seçilmesi
+
+### Silhouette
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(kumegecerliligi, aes(x = `Ortalama Silhouette Değeri`, y = `Kümeleme Algoritması` )) +
+  geom_point() +
+  theme_minimal()+
+  labs(title =  "Kümeleme Algoritmasına Göre Silhouette Değerleri")
+```
+
+Silhouette -1 ile 1 arasında değerler alır. Bir kümelemenin iyi sonuç verdiği çıkarımında bulunabilmek için, kümeleme sonrası ulaşılan Ortalama Silhouette Değerinin 1'e mümkün olduğunca yakın olması gerekmektedir. Silhouette değerinin en çok çıktığı kümeleme Aşamalı Kümelemedeki Average linkage methodu çıkmıştır. Küme sayısı ise ikidir.
+
+### Dunn
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(kumegecerliligi, aes(x = `Dunn Değeri`, y = `Kümeleme Algoritması` )) +
+  geom_point() +
+  theme_minimal()+
+  labs(title =  "Kümeleme Algoritmasına Göre Dunn Değerleri")
+```
+
+Dunn endeksi sıfırdan maksimuma kadar uzanan değerler alır. En iyi Dunn değeri maksimum değerdir. Dunn değerinin en çok çıktığı kümeleme Aşamalı Kümelemedeki Average linkage methodu çıkmıştır. Küme sayısı ise ikidir.
+
+### Connectivity
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(kumegecerliligi, aes(x = `Connectivity Değeri`, y = `Kümeleme Algoritması` )) +
+  geom_point() +
+  theme_minimal()+
+  labs(title =  "Kümeleme Algoritmasına Göre Connectivity Değerleri")
+```
+
+Connectivity değeri 0'dan sonsuza kadar giden değerler alır. Mümkün olduğunca küçük olmalıdır. Connectiviy değerinin en çok çıktığı kümeleme Aşamalı Kümelemedeki Average linkage methodu çıkmıştır. Küme sayısı ise ikidir.
+
+### Rand
+
+```{r echo=FALSE, message=TRUE, warning=TRUE}
+ggplot(kumegecerliligi, aes(x = `Rand Değeri`, y = `Kümeleme Algoritması` )) +
+  geom_point() +
+  theme_minimal()+
+  labs(title =  "Kümeleme Algoritmasına Göre Rand Değerleri")
+```
+
+Rand endeksi -1 (uyum yok) ile 1 (mükemmel uyum) arasında değer alır. 1'e en yakın olan değer, en iyi değerdir. Denenen tüm yöntemler için Rand değerleri incelendiğinde bire en yakın değerin K- Medoids algortiması çıkmıştır. Küme sayısı ise 2 olarak görünmüştür.
+
+### VI Index
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(kumegecerliligi, aes(x = `VI Değeri`, y = `Kümeleme Algoritması` )) +
+  geom_point() +
+  theme_minimal()+
+  labs(title =  "Kümeleme Algoritmasına Göre VI Değerleri")
+```
+
+VI endeksi -1 (uyum yok) ile 1 (mükemmel uyum) arasında değer alır. 1'e en yakın olan değer en iyi değerdir. Bütün Melia değişim değerleri incelendiğinde en iyi algoritma olarak Yoğunluk Temelli kümeleme algoritması çıkmıştır.
+
+### Label Karşılaştırması
+
+```{r}
+ggplot(kumegecerliligi, aes(x = Label, y = `Kümeleme Algoritması` )) +
+  geom_point() +
+  theme_minimal()+
+  labs(title =  "Label Değerleri ile Kümeleme Sonuçları Arasındaki Frekans Farkı")
+```
+
+Yukarıdaki grafik label frekansı ile kümeleme frekansları arasındaki farkı göstermektedir. Bu farkın en az olduğu kümeleme algoritması, label'a en yakın sonuçla kümeleme yapan algoritmayı göstermektedir. Bu sebeple K - Medoids en uygun algoritma olarak görülmektedir. Küme sayısı ise 2 olarak görülmektedir.
+
+## Sonuç
+
+Clvalid ve diğer tüm ölçütlerin önerilerine göre:
+
+-   3 ölçek 2 kümeli, average linkage ile yapılmış aşamalı kümelemeyi,
+-   2 ölçek 2 kümeli K - Medoids,
+-   1 ölçek ise Yoğunluk Temelli Kümeleme algoritmasını önermiştir.
+
+Normal şartlar altında en uygun kümeleme yöntemi Aşamalı, optimal küme sayısı ise 2 seçilmeliydi. Ancak bu veri seti ve bu analiz özelinde, küme elemanları farklılıkları, küme içi varyansların aşırı farklı olması ve labelların bilindiği düşünüldüğünde; label ile arasındaki frekans farkının en az olduğu algoritmanın seçilmesinin daha uygun olduğu düşünülmüştür. Bir başka deyişle, en uygun kümeleme algoritması olarak **K - Medoids** , optimal küme sayısı olarak ise **2** seçilmiştir. K - Medoids 569 gözlem içerisinde yalnızca 42 adet yanlış kümeleme yapmıştır. %7'lik bir hata oranıyla çalıştığı düşünüldüğünde oldukça başarılı bir kümeleme olduğu söylenebilir.
+
+# Kümeleme Sonuçları
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+son_data <- cbind(data, cluster= pam_data$clustering )
+```
+
+Her değişkenin ortalamaları, küme ortalamaları ile karşılaştırılmak istenilmiştir. Aşağıdaki tablo bu karşılaştırmayı göstermek için çizdirilmiştir.
+
+| Değişkenler       | Birinci Küme | İkinci Küme |
+|-------------------|--------------|-------------|
+| Radius            | Yüksek       | Ortalama    |
+| Texture           | Yüksek       | Ortalama    |
+| Perimeter         | Yüksek       | Az          |
+| Area              | Yüksek       | Az          |
+| Smoothness        | Yüksek       | Az          |
+| Compactness       | Yüksek       | Az          |
+| Concavity         | Yüksek       | Az          |
+| Concave Points    | Yüksek       | Ortalama    |
+| Symmetry          | Yüksek       | Ortalama    |
+| Fractal Dimension | Ortalama     | Ortalama    |
+
+: Kümeleme Sonuçları
+
+## Label ile Karşılaştırma
+
+```{r echo=FALSE}
+describeBy(wdbc[3:10], group = wdbc[2])
+```
+
+M (kötü huylu tümör) ve B (iyi huylu tümör) labellarına göre çıkartılan tanımlayıcı istatistik değerleri incelendiğinde M labelındaki gözlemlerin değişkenlerdeki ortalamalarının ortalamanın üzerinde seyrettiği fark edilmiştir. Kümeleme sonuçlarında değişkenlerin ortalamanın üzerinde seyrettiği kümenin birinci küme olduğu düşünüldüğünde; birinci kümenin kötü huylu tümörü ifade ettiği, ikinci kümenin iyi huylu tümörü ifade ettiği söylenebilir.
+
+## Sonuçların Görselleştirilmesi
+
+Raporu daha fazla uzatmamak düşüncesiyle PC1 ve PC2'nin temsil ettiği ikişer değişken seçilerek her bir küme için bu değişkenlerin birbiri ile olan ilişkisinin incelendiği iki adet grafik çizdirilmiştir. Grafik çizdirilirken 1 ve 2 olan küme isimleri label karşılaştırılmasında çıkartılan sonuçlara göre M(Kötü Huylu Tümör) ve B (İyi Huylu Tümör) olarak değiştirilmiştir.
+
+```{r}
+son_data <- mutate(son_data, cluster = ifelse(cluster == 1,"M - Kötü Huylu Tümör", "B - İyi Huylu Tümör"))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(son_data, aes(area, radius))+
+  geom_point(color = "darkblue") +
+  facet_grid(rows = vars(cluster))
+```
+
+M(Kötü Huylu Tümör) için çıkartılan grafikte Radius 8, Area 250 bandından başlayıp her iki değerin maksimum değerlerine ulaşan pozitif bir ilişki gözlemlenmiştir. B(İyi Huylu Tümör) için her iki değişkende de 0'dan başlayıp Area için 1000'de, Radius için 17'de biten pozitif bir ilişki gözlemlenmiştir. Bu grafikten kötü huylu tümörlerin çekirdeklerinin alanları daha geniş aralıkta seyrederken; iyi huylu tümörlerin alanlarının çok fazla büyümediği çıkarımında bulunulabilir. İyi huylu tümörlerin ise yarıçapının 17'den fazlaya çıkmadığı gözlemlenmiştir.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(son_data, aes(fractal.dimension, smoothness))+
+  geom_point(color = "darkolivegreen4") +
+  facet_grid(rows = vars(cluster))
+```
+
+B(İyi Huylu Tümör) kümesi için hem Fractal dimension değişkeninde, hem de Smoothness değişkeninde geniş bir aralıkta yayılım gözlemlenmektedir. M(Kötü Huylu Tümör) kümesi için de hem Fractal dimension değişkeninde, hem de Smoothness geniş bir aralıkta yayılım gözlemlenmektedir. Bunun sebebinin ayrışmanın yalnızca PC1 değişkeninde gerçekleşmiş olması olabilir. Buradan da İyi veya Kötü Huylu Tümör ayrımını yapmak için yapılacak olan analizlerde PC2'de yer alan değişkenlere (Fractal Dimension, Smoothness, Compactness, Symmetry) göre yorum yapmanın yanıltıcı olabileceği çıkarımında bulunulabilir.

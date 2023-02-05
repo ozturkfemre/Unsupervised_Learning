@@ -1,0 +1,1371 @@
+---
+title: "Unsupervised Learning"
+author: "Fatih Emre Ozturk"
+date: "2023-02-01"
+output: html_document
+---
+
+```{r include=FALSE}
+library(readr)
+library(cluster)
+library(clusterSim)
+library(factoextra)
+library(corrplot)
+library(stats)
+library(clustertend)
+library(psych)
+library(NbClust)
+library(clValid)
+library(plotly)
+library(fpc)
+library(mclust)
+library(dbscan)
+library(tidyverse)
+library(ggpubr)
+```
+
+```{r include=FALSE}
+wdbc <- read_csv("wdbc.data", col_names = FALSE)
+
+wdbc <- wdbc[1:12]
+
+colnames <- c("ID", "Diagnosis", "radius", "texture", "perimeter", "area", "smoothness", "compactness", "concavity", "concave.points", "symmetry", "fractal.dimension" )
+names(wdbc) <- colnames
+
+#clustering için son hali
+data <- wdbc[3:12]
+df2 <- wdbc[2:12]
+```
+
+# Descriptive Statistics
+
+```{r}
+summary(data)
+```
+
+When we check the descriptive statistics of the dataset:
+
+-   Mean of the radius variable is higher then than the median. This means that radius variable is right-skewed. When we compare the values of the third quantile and maximum value, it can be referred that there might be some outliers in the variable. However, it is best to make the final judgement with boxplot analysis.
+
+-   Mean of the texture variable is higher then than the median. This means that texture variable is right-skewed. When we compare the values of the third quantile and maximum value, it can be referred that there might be some outliers in the variable. However, it is best to make the final judgement with boxplot analysis.
+
+-   Mean of the perimeter variable is higher then than the median. This means that perimeter variable is right-skewed. When we compare both the values of the third quantile and maximum value, and min and first quantile value, it can be referred that there might be some outliers in the variable. However, it is best to make the final judgement with boxplot analysis.
+
+From the descriptive statistics, it can easily be stated that values differ a lot. The dataset must be scaled. However, if there is high correlation between variable pairs, PCA needs to be applied to the dataset.
+
+# Correlation Analysis
+
+```{r}
+corr <- cor(data, method = "spearman")
+corrplot(corr, method="color" )
+```
+
+Correlation is analyzed with spearman method. The reason behind this the assumption of normality in pearson method.
+
+Correlation matrix of the dataset reveals that there are high correlation between variable pairs. Correlation between Radius, perimeter, and area variables are more than 0.98. These are too much. Correlation between Compactness, concavity, and concave points variables are more that 0.83. Fractal Dimension is the only variable with negative correlation.
+
+# Data Visualization
+
+```{r}
+par(mfrow=c(2,5))
+boxplot(data$radius, main = "radius", col = "dodgerblue2")
+boxplot(data$texture, main = "texture", col = "dodgerblue2")
+boxplot(data$perimeter, main = "perimeter", col = "dodgerblue2")
+boxplot(data$area, main = "area", col = "dodgerblue2")
+boxplot(data$smoothness, main = "smoothness", col = "dodgerblue2")
+boxplot(data$compactness, main = "compactness", col = "dodgerblue2")
+boxplot(data$concavity, main = "concavity", col = "dodgerblue2")
+boxplot(data$concave.points, main = "concave points", col = "dodgerblue2")
+boxplot(data$symmetry , main = "symmetriy", col = "dodgerblue2")
+boxplot(data$fractal.dimension , main = "fractal dimension", col = "dodgerblue2")
+```
+
+It can be observed from the boxplots that there are lots of outliers in each variables. Variance of the some variables(radius, texture, perimeter, concavity, concave points) is very high.
+
+```{r}
+indexes = sapply(df2, is.numeric)
+indexes["Diagnosis"] = TRUE
+df2[,indexes]%>%
+  gather(-Diagnosis, key = "var", value = "value") %>% 
+  ggplot(aes(x = value, y = Diagnosis, color = Diagnosis)) +
+  geom_boxplot() +
+  facet_wrap(~ var, scales = "free")+
+  theme(axis.text.x = element_text(angle = 30, hjust = 0.85),legend.position="none",
+        panel.background = element_rect(fill = "white"))+
+  theme(strip.background =element_rect(fill="goldenrod1"))+
+  theme(strip.text = element_text(colour = "firebrick3"))
+```
+
+When the boxplots of the variables according to the levels of Diagnosis are examined, it is noticed that the M level takes higher values for almost every variable. This is not only valid for the fractal.dimension variable. Again, it was noticed that the variance of the M level was higher for all variables except the fractal.dimension variable. This makes the dataset clusterable.
+
+# Principle Component Analysis
+
+Principal component analysis (PCA) is a technique used to identify patterns in a dataset. It does this by identifying the directions (or "components") in the data that account for the most variation. The first component is the direction in the data that accounts for the most variation, the second component is the direction in the data that accounts for the second most variation, and so on. [1], [2]
+
+Here is a step-by-step explanation of how PCA is calculated:
+
+1.  Standardize the data: The data is transformed so that each variable has a mean of zero and a standard deviation of one. This is done to ensure that all variables are on the same scale.
+
+2.  Compute the covariance matrix: This matrix is calculated to determine the relationship between the variables in the dataset.
+
+3.  Compute the eigenvectors and eigenvalues of the covariance matrix: Eigenvectors represent the directions in the data that account for the most variation, and eigenvalues represent the amount of variation that is accounted for by each eigenvector.
+
+4.  Select the principal components: The eigenvectors with the highest eigenvalues are chosen as the principal components of the dataset.
+
+5.  Transform the data: The original dataset is transformed by projecting it onto the principal components, resulting in a new dataset with reduced dimensionality.
+
+6.  Interpret the components: The principal components are interpreted in terms of the original variables to understand the underlying patterns in the data.
+
+Applying PCA to the dataset before clustering has several advanteges that can be listed as follows:
+
+1.  Dimensionality Reduction: PCA can be used to reduce the number of features in a high-dimensional dataset, which can help improve the performance of a clustering algorithm. By reducing the dimensionality, PCA can also help to reduce noise and eliminate multicollinearity in the data, making it easier to interpret the results of a clustering analysis. [3]
+
+2.  Visualization: PCA can be used to visualize high-dimensional datasets in two or three dimensions, making it easier to understand the structure of the data and identify clusters. This can be especially useful for large datasets with many features, as it is often difficult to visualize and interpret the results of a clustering analysis in high dimensions.
+
+3.  Speed: Clustering algorithms can be computationally expensive, especially for large datasets. By reducing the dimensionality of the data with PCA, the computational burden of the clustering algorithm can be significantly reduced, making it faster and more computationally efficient. [3]
+
+4.  Improved Clustering Results: PCA can help to enhance the performance of a clustering algorithm by transforming the data into a new coordinate system that better separates the underlying clusters. This can lead to more accurate and meaningful results, especially for datasets with complex structures. [4]
+
+## Stats Package
+
+```{r echo=FALSE}
+data.pca <- prcomp(data, center = TRUE, scale. = TRUE)
+summary(data.pca)
+
+```
+
+Two components seems to be the best to explain the dataset. 0.7997 cumulative proportion of the PC2 increases to 0.887 cumulative proportion in the PC3. This increase can be dismissed. At PC3 Proportion of variance is very low. This means that PC2 is the best number for the principle component.
+
+```{r echo=FALSE}
+data.eigen <- eigen(corr)
+eigenvalues <- data.eigen$value
+eigenvalues
+```
+
+Eigen values show that as the closest value to 1, 3 components is the best.
+
+```{r echo=FALSE}
+fviz_eig(data.pca)
+```
+
+According to scree plot's elbow, 3 components is the best.
+
+```{r echo=FALSE}
+data.pca$rotation[,1:3]
+```
+
+When the output containing the variables expressed by the components was analyzed, it was realized that the third component expressed only the Texture variable. It was also possible to see the anomaly of the Texture variable in the correlation analysis. It is understandable that this variable, which has no significant correlation with any variable, is expressed by another component. If the number of components is chosen to be two, it is also observed that 2 components do not express the Texture variable well. Adding a component for a single variable did not seem to make much sense with an explanatory cost of 0.9. The low correlation of the Texture variable with other variables was also taken into account to reach this decision.
+
+## Psych Package
+
+```{r warning=FALSE}
+x <- fa.parallel(data, fm="pa", fa="both", n.iter=1)
+```
+
+fa.parallel function in the psych package decides the best component number by itself and it decided the component number to be two.
+
+```{r echo=FALSE}
+fit <- principal(data, x$ncomp, rotate="varimax") 
+fa.diagram(fit)
+```
+
+As it can be seen from the diagram, following variables are explained by the following components.
+
+-   PC1 : Radius, Perimeter, Area, Concave Points, Concavity, Texture
+
+-   PC2 : Fractal Dimension, Smoothness, Compactness, Symmetry
+
+```{r echo=FALSE, warning=FALSE}
+fviz_pca_ind(data.pca,
+             col.ind = "cos2", 
+             gradient.cols = c("dodgerblue3", "goldenrod1", "firebrick1"),
+             repel = TRUE   )
+```
+
+When the contributions of the observations in the PC1 and PC2 graphs are analyzed, a clustering is observed in the upper right and lower right. It can be said that these observations express similar characteristics. For example, when the values of the 79th observation at the bottom left are examined, it can be seen that it has values close to the maximum for all variables except Radius and Texture. When the 569th observation values on the opposite axis are examined, it can be seen that Smoothness and Concavity have minimum values, while Texture has a value above the 3rd quartile.
+
+```{r echo=FALSE, warning=FALSE}
+fviz_pca_var(data.pca,
+             col.var = "contrib", 
+             gradient.cols = c("dodgerblue3", "goldenrod1", "firebrick1"),
+             repel = TRUE     )
+```
+
+When the PCA graph of the variables is analyzed, it can be said that the variables with positive correlation point to the same regions. While Area has a positive correlation with Perimeter, which is in the same component, it has a negative correlation with fractal dimension, which is in a different component. The contributions of the variables can be better seen through this graph.
+
+# Clustering Analysis
+
+For cluster analysis, PCA applied dataset will be used.
+
+```{r include=FALSE}
+pcadata <- predict(data.pca)[,1:2]
+```
+
+## Measuring Clustering Tendency
+
+The Hopkins statistic is a measure used to determine the likelihood that a dataset is generated from a uniform distribution, which is useful for determining whether a dataset is suitable for clustering. [5], [6]
+
+The Hopkins statistic is calculated as follows:
+
+1.  Generating a random sample of n points from the dataset, where n is a small number (typically n=50).
+
+2.  Generating a random sample of n points from a uniform distribution, with the same number of dimensions as the dataset.
+
+3.  Calculating the average distance between each point in the dataset sample and its nearest neighbor in the dataset sample (d(data)).
+
+4.  Calculating the average distance between each point in the uniform sample and its nearest neighbor in the uniform sample (d(unif)).
+
+5.  Calculating the Hopkins statistic
+
+A value of Hopkins statistic close to 1 indicates that the dataset is suitable for clustering, while a value close to 0 indicates that the dataset is not suitable for clustering and might have been generated from a uniform distribution.
+
+```{r warning=FALSE}
+hopkins.data <- hopkins(pcadata, n = nrow(pcadata)-1)
+hopkins.data
+
+```
+
+The Hopkins value for this data set is 0.1908455. This indicates that the data set is clusterable.
+
+## k-means
+
+K-means is a popular clustering algorithm that groups similar observations together (clusters) based on a set of features. The main idea behind k-means is to define spherical clusters where the observations in the same cluster are as similar as possible and observations in different clusters are as dissimilar as possible. [7], [8], [9]
+
+The steps to perform k-means clustering are:
+
+-   Select k, the number of clusters, that you want to form in the data.
+
+-   Select k random points from the dataset as the initial centroids (cluster center)
+
+-   Assign each observation to the cluster whose centroid is closest to it.
+
+-   Recalculate the centroids as the mean of all the observations in each cluster.
+
+-   Repeat steps 3 and 4 until the cluster assignments no longer change or reach a maximum number of iterations.
+
+It's important to note that the final clusters may depend on the initial conditions, so it's recommended to run k-means multiple times with different initial centroids, then choose the best solution. Also k-means is sensitive to the scale of the data, so it's recommended to scale the data before applying the k-means algorithm. K-means is efficient for large datasets, but it's not well suited for non-globular clusters or clusters of different densities. After applying the k-means algorithm, the resulting output will be k clusters where each cluster has its own centroid, and each observation will be assigned to the cluster to which it is closest. These clusters can be used for further analysis or interpretation of the data.
+
+### Determination of the Cluster Number k
+
+#### Elbow Method
+
+The elbow method is a technique used to determine the optimal number of clusters for a k-means clustering analysis. The idea behind the elbow method is to run k-means clustering on the dataset for a range of values of k (number of clusters), and for each value of k calculate the sum of squared distances of each point from its closest centroid (SSE). The elbow point is the point on the plot of SSE against the number of clusters (k) where the change in SSE begins to level off, indicating that adding more clusters doesn't improve the model much. [10], [11]
+
+The steps to perform the elbow method are:
+
+-   Select a range of k values, usually from 1 to 10 or the square root of the number of observations in the dataset.
+
+-   Run k-means clustering for each k value and calculate the SSE (sum of squared distances of each point from its closest centroid).
+
+-   Plot the SSE for each k value.
+
+-   The point on the plot where the SSE starts to decrease at a slower rate is the elbow point, and the corresponding number of clusters is the optimal value for k.
+
+```{r echo=FALSE, warning=FALSE}
+fviz_nbclust(pcadata , kmeans, nstart = 25, iter.max = 200, method = "wss") +
+  labs(subtitle = "Elbow Method") 
+
+```
+
+When the Elbow Method graph is analyzed, it can be said that it is not possible to make a definite decision for the number of clusters, but two clusters can be selected.
+
+#### Average Silhouette Method
+
+The average silhouette method is a technique used to determine the optimal number of clusters for a clustering analysis. It measures the similarity of each point to its own cluster compared to other clusters. The silhouette value of a point is a measure of how similar that point is to other points in its own cluster compared to other clusters.[12], [13]
+
+The steps to perform the average silhouette method are:
+
+1.  Select a range of k values, usually from 1 to 10 or the square root of the number of observations in the dataset.
+
+2.  Run clustering algorithm (such as k-means or hierarchical clustering) for each k value
+
+3.  For each point in the dataset, calculate its silhouette value using the formula: (b-a)/max(a,b) where a is the mean distance to the points in the same cluster, and b is the mean distance to the points in the closest other cluster.
+
+4.  Calculate the average silhouette value for all points in the cluster.
+
+5.  Plot the average silhouette value for each k value.
+
+6.  The k value that corresponds to the highest average silhouette value is the optimal number of clusters.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata, kmeans ,method = "silhouette")+
+  labs(subtitle = "Average Silhouette Method") 
+
+```
+
+When the Silhouette graph is analyzed, it can be observed that the highest silhouette value is in two clusters. However, 3 clusters can also be tried since there is not much difference between them.
+
+#### Gap Statistic Method
+
+The gap statistic is a technique used to determine the optimal number of clusters for a clustering analysis. It compares the observed within-cluster variation for different values of k with the variation expected under a null reference distribution of the data. [14]
+
+The steps to perform the gap statistic method are:
+
+1.  Select a range of k values, usually from 1 to 10 or the square root of the number of observations in the dataset.
+
+2.  Run the clustering algorithm (such as k-means or hierarchical clustering) for each k value and calculate the within-cluster variation Wk.
+
+3.  Generate B reference datasets by randomly sampling the original data and calculate the within-cluster variation W\*k for each dataset.
+
+4.  Calculate the gap statistic
+
+5.  Plot the gap statistic for each k value.
+
+6.  The k value that corresponds to the maximum gap statistic is the optimal number of clusters.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata, kmeans ,nstart = 25, method = "gap_stat", nboot = 500)+
+  labs(subtitle = "Gap Statistics Method") 
+```
+
+The Gap Statistics value also indicates that the most appropriate number of clusters is two.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+nb <- NbClust(pcadata , distance = "euclidean", min.nc = 2,
+              max.nc = 9, method = "kmeans")
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(nb) + labs(subtitle ="NbClust Plot")
+```
+
+When the output of the NbClust package was analyzed, it was found that 9 methods suggested 2 clusters and 6 methods suggested 3 clusters. According to majority rule, the best number of cluster is 2. However, both 2 and 3 clusters will be examined for k-means, k-medoids, and hierarchical clustering alhorithms.
+
+### k-means for k=2
+
+```{r echo=FALSE}
+set.seed(1993)
+km_data <- kmeans(pcadata, 2, nstart=25) 
+print(km_data)
+```
+
+When the result of the k-means clustering with 2 clusters is examined, the followings are founded:
+
+-   There are 398 observations in cluster 1, 171 observations in cluster 2.
+
+-   Total within cluster sum of squares for clusters are 1121.768 and 1216.540.
+
+-   It is best for within cluster sum of squares for each cluster to be closer to each other. In this case, they are very close.
+
+-   This clustering result explain %48.5 of the separation.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(km_data, data = pcadata,
+             ellipse.type = "convex", 
+             star.plot = TRUE, 
+             repel = TRUE, 
+             ggtheme = theme_minimal()
+) 
+```
+
+Separation can be observed only in PC1 dimension. Within sum of square of the cluster 2 is much than the cluster 1. The reason of this needs to be the difference between observation numbers of the clusters.There is no visible overlap between clusters.
+
+***NOTE:***
+
+Cluster Validation of 2 clustered k-means is done outside of this report. It can be seen in the script. However, validation coefficients will be compared after all algorithms are analyzed.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+k2m_data <- eclust(pcadata, "kmeans", k = 2, nstart = 25, graph = F)
+fviz_silhouette(k2m_data, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+sil <- k2m_data$silinfo$widths[, 1:3]
+neg_sil_index <- which(sil[, 'sil_width']<0)
+sil[neg_sil_index, , drop = FALSE]
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+km_stats <- cluster.stats(dist(pcadata), k2m_data$cluster)
+km_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, k2m_data$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+table(wdbc$Diagnosis, k2m_data$cluster)
+```
+
+```{r include=FALSE}
+diagnosis <- ifelse(wdbc$Diagnosis == "M",1,2 )
+cluster.stats(d = dist(data),diagnosis, k2m_data$cluster)$corrected.rand
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, k2m_data$cluster)$vi
+```
+
+### k-means for k=3
+
+```{r echo=FALSE}
+set.seed(1993)
+k3m_data <- kmeans(pcadata, 3, nstart=25) 
+print(k3m_data) 
+```
+
+When the result of the k-means clustering with 3 clusters is examined, the followings are founded:
+
+-   There are 117 observations in cluster 1, 117 observations in cluster 2, and 335 observations in cluster 3.
+
+-   Total within cluster sum of squares for clusters are 620.5682, 455.6488, and 634.0446.
+
+-   It is best for within cluster sum of squares for each cluster to be closer to each other. In this case, WSS of cluster 2 is less than the other clusters.
+
+-   This clustering result explain %62.3 of the separation.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+fviz_cluster(k3m_data, data = pcadata,
+             ellipse.type = "convex", 
+             star.plot = TRUE, 
+             repel = TRUE, 
+             ggtheme = theme_minimal()
+) 
+```
+
+There is no overlap between clusters.
+
+Separation can be observed both in PC1 and in PC2 dimensions.
+
+Within sum of square of the cluster 1 is more than other clusters.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+km3_data <- eclust(pcadata, "kmeans", k = 3, nstart = 25, graph = F)
+fviz_silhouette(km3_data, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+sil <- km3_data$silinfo$widths[, 1:3]
+neg_sil_index <- which(sil[, 'sil_width']<0)
+sil[neg_sil_index, , drop = FALSE]
+
+```
+
+```{r include=FALSE}
+k3m_stats <- cluster.stats(dist(pcadata), km3_data$cluster)
+k3m_stats$dunn
+
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, km3_data$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, km3_data$cluster)
+```
+
+```{r include=FALSE}
+diagnosis <- ifelse(wdbc$Diagnosis == "M",1,2 )
+cluster.stats(d = dist(data),diagnosis, km3_data$cluster)$corrected.rand
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, km3_data$cluster)$vi
+
+```
+
+***NOTES:***
+
+1.  k-means clustering for k=5: Despite the explanatory power being higher for 5 clusters (76.3) compared to 2 and 3 clusters, the average silhouette value is lower (0.36). The separation was achieved in both dimensions without overlapping and cluster element numbers are close to each other. However, when considering the results given by label and cluster validity statistics, the decision was made not to include it in the report.
+
+2.  k-mean clustering for k=7: Despite the explanatory power being higher for 7 clusters (82.1) compared to 2 and 3 clusters, the average silhouette value is lower (0.35). The separation was realized with little overlap in both dimensions and the cluster element numbers are even closer to each other. Although the difference between the within-cluster variances decreases; considering the results given by label and cluster validity statistics, the decision was made not to include it in the report.
+
+## k-medoids
+
+K-medoids is a clustering algorithm that is similar to k-means, but instead of using the mean of the observations in each cluster as the centroid, it uses one of the observations in the cluster as the "medoid." The main idea behind k-medoids is to define clusters where the total dissimilarity between observations and the medoid is minimized. The k-medoids algorithm is also known as Partitioning Around Medoids (PAM) algorithm. [15], [16]
+
+The steps to perform k-medoids clustering are:
+
+1.  Select k, the number of clusters, that you want to form in the data.
+
+2.  Select k random observations from the dataset as the initial medoids.
+
+3.  Assign each observation to the cluster whose medoid is closest to it based on a distance metric.
+
+4.  Recalculate the medoids as the observation in each cluster that minimizes the total dissimilarity to the other observations in the same cluster.
+
+5.  Repeat steps 3 and 4 until the cluster assignments no longer change or reach a maximum number of iterations.
+
+It's important to note that k-medoids is more robust to noise and outliers than k-means, it's also more efficient for handling categorical variables. However, k-medoids is more computationally expensive than k-means because it requires the calculation of all pairwise distances between observations at each iteration. Like k-means, k-medoids is sensitive to the initial conditions and it's recommended to run the algorithm multiple times and choose the best solution.
+
+After applying the k-medoids algorithm, the resulting output will be k clusters where each cluster has its own medoid, and each observation will be assigned to the cluster to which it is closest. These clusters can be used for further analysis or interpretation of the data.
+
+### Determination of the Cluster Number k
+
+#### Elbow Method
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata , pam, method = "wss") +
+  labs(subtitle = "Elbow Method") 
+```
+
+When the Elbow Method graph is analyzed, it can be said that it is not possible to make a definite decision for the number of clusters, but two clusters can be selected.
+
+#### Average Silhouette Method
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata, pam ,method = "silhouette")+
+  labs(subtitle = "Average Silhouette Method") 
+```
+
+When the Silhouette graph is analyzed, it can be observed that the highest silhouette value is in two clusters.
+
+#### Gap Statistics Method
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(pcadata, pam, method = "gap")+
+  labs(subtitle = "Gap Statistics Method") 
+```
+
+The Gap Statistics value also indicates that the most appropriate number of clusters is two.
+
+It was concluded that the optimal number of clusters is two based on the three methods considered when the graph was plotted. Trials were made for 2, 3, 4, and 5 clusters in the analysis. However, only the analysis made for 2 and 3 cluster numbers were included in the report.
+
+In the analysis for 4 clusters, it was noticed that the separation took place in both dimensions. The variance within the two clusters was found to be low, while the variance of the other two clusters was found to be disproportionately high. Due to the lower Silhouette value (0.34) compared to the other one or two clusters and considering the label, the decision was not to include this analysis in the report.
+
+In the analysis for 5 clusters, the separation was also observed in both dimensions. Again, the variance within two clusters was higher compared to the other three clusters. The Silhouette value continued to decrease (0.33) and, considering the label, the decision was not to include this analysis with this number of clusters in the report.
+
+### k-medoids for k=2
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(1993)
+pam_data <- pam(pcadata,2)
+print(pam_data)
+```
+
+There are 499 observations in cluster 1, 269 observations in cluster 2 which can be stated as unbalanced.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(pam_data,
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+
+```
+
+No overlap is observed when two and three dimensional graphs are analyzed. Just like in the k-means, it is observed that the separation occurs only in the PC1 dimension. The variance in the first cluster shown in red color is higher.
+
+```{r include=FALSE}
+p2m_data <- eclust(pcadata, "pam", k = 2, nstart = 25, graph = F)
+fviz_silhouette(p2m_data, palette = "jco",
+                ggtheme = theme_classic())
+
+
+```
+
+```{r include=FALSE}
+silp <- p2m_data$silinfo$widths[, 1:3]
+neg_silp_index <- which(silp[, 'sil_width']<0)
+silp[neg_silp_index, , drop = FALSE]
+
+
+```
+
+```{r include=FALSE}
+pam_stats <- cluster.stats(dist(pcadata), p2m_data$cluster)
+pam_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, p2m_data$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, p2m_data$cluster)
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, p2m_data$cluster)$corrected.rand
+
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, p2m_data$cluster)$vi
+
+```
+
+### k-medoids for k=3
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(1993)
+pam3_data <- pam(pcadata,3)
+print(pam3_data)
+```
+
+There are 159 observations in cluster 1, 19 observations in cluster 2, and 241 observations in cluster 3 which is also unbalanced.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(pam3_data,
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+```
+
+When the cluster graph is analyzed, it can be seen that there is no overlap. It can be seen that the separation occurs in both PC1 and PC2 dimensions. While the variance in the first cluster shown in red is high, the variance in the third cluster shown in blue is low.
+
+```{r include=FALSE}
+p3m_data <- eclust(pcadata, "pam", k = 3, nstart = 25, graph = F)
+fviz_silhouette(p3m_data, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silp3 <- p3m_data$silinfo$widths[, 1:3]
+neg_silp3_index <- which(silp3[, 'sil_width']<0)
+silp3[neg_silp3_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+pam3_stats <- cluster.stats(dist(pcadata), p3m_data$cluster)
+pam3_stats$dunn
+ 
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, p3m_data$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, p3m_data$cluster)
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, p3m_data$cluster)$corrected.rand
+
+
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, p3m_data$cluster)$vi
+
+```
+
+## Hierarchical Clustering
+
+Hierarchical Clustering is a method of clustering in which the objects are organized into a tree-like structure called a dendrogram. The main idea behind hierarchical clustering is to start with each object as a separate cluster and then combine them into larger clusters iteratively based on their similarity. There are two main types of hierarchical clustering: Agglomerative and Divisive. [17], [18], [19]
+
+Agglomerative hierarchical clustering:
+
+1.  Start with each object as a separate cluster
+
+2.  Find the two most similar clusters and combine them into a new cluster
+
+3.  Repeat step 2 until all objects are in the same cluster
+
+Divisive hierarchical clustering:
+
+1.  Start with all objects in the same cluster
+
+2.  Divide the largest cluster into two smaller clusters based on their similarity
+
+3.  Repeat step 2 until each object forms its own cluster
+
+Hierarchical clustering can be represented by a dendrogram, which is a tree-like structure that shows the hierarchy of clusters and the relations between them. The dendrogram can be cut at a certain height to obtain a flat clustering solution with a specific number of clusters.
+
+It's important to note that hierarchical clustering is sensitive to the scale and density of the data, so it's important to scale the data before applying the method. Also, the choice of linkage method (single, complete, average, etc) is important and it affects the final clustering. Additionally, hierarchical clustering is computationally expensive for large datasets and it's not suitable for handling high-dimensional data.
+
+### Ward's Minimum Variance Method
+
+The Ward's linkage method will be started for hierarchical clustering. Hierarchical clustering will be performed using both euclidean and manhattan distance metrics and dendograms will be visualized. Then, the cophenetic distances of the clustering will be measured. The correlation between the original distance and cophenetic distance will be examined and a decision will be made on which distance metric to proceed with.
+
+Ward's method is an agglomerative linkage method used in hierarchical clustering. It is based on the idea of minimizing the variance of the distances between the observations in the new cluster and the cluster centroid. This linkage method aims to minimize the total within-cluster variance of the new cluster formed by merging two smaller clusters.
+
+#### Cophenetic Distance
+
+The cophenetic distance is a measure used in hierarchical clustering to evaluate the similarity between two observations in the dendrogram produced by the clustering algorithm. It is defined as the distance between two observations in the original data space at the level in the dendrogram where they first merge into the same cluster[20].
+
+The cophenetic distance is calculated as follows:
+
+-   Perform hierarchical clustering on the data to produce a dendrogram
+
+-   For each pair of observations, find the level in the dendrogram where they first merge into the same cluster.
+
+-   Compute the distance between the two observations in the original data space. Repeat steps 2 and 3 for all pairs of observations.
+
+The cophenetic distance is used to evaluate the quality of the clustering solution by comparing it to the original data space. A high correlation between the cophenetic distance and the original distance between observations in the data space indicates that the clustering solution is preserving the structure of the data well.
+
+It's important to note that the cophenetic distance is computationally expensive for large datasets, also the linkage method used in the hierarchical clustering affects the final clustering and it's recommended to compare the results with other linkage methods and visualizing the data.
+
+```{r}
+dist_euc <- dist(pcadata, method="euclidean")
+dist_man <- dist(pcadata, method="manhattan")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+hc_e <- hclust(d=dist_euc, method="ward.D2")
+fviz_dend(hc_e,cex=.5) 
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+hc_m <- hclust(d=dist_man, method="ward.D2")
+fviz_dend(hc_m,cex=.5) 
+```
+
+```{r}
+coph_e <- cophenetic(hc_e)
+cor(dist_euc,coph_e)
+```
+
+```{r}
+coph_m <- cophenetic(hc_m)
+cor(dist_man,coph_m)
+```
+
+When the correlation between Cophenetic and distance matrix is examined, it is observed that hierarchical clustering with euclidean distance gives better results.
+
+#### Determination of the Cluster Number k
+
+```{r include=FALSE}
+nbward <- NbClust(pcadata , distance = "euclidean", min.nc = 2,
+              max.nc = 9, method = "ward.D2")
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(nbward) + labs(subtitle ="NbClust Grafiği")
+```
+
+When the output of the NbClust package was analyzed, it was found that 7 methods suggested 2 clusters and 5 methods suggested 3 clusters. According to majority rule, the best number of cluster is 2. However, both 2 and 3 clusters will be examined for k-means, k-medoids, and hierarchical clustering alhorithms.
+
+In the analysis done for 6 clusters, it was found that the separation occurred in both dimensions, but there were some overlaps in some clusters. Despite the similar number of elements in the clusters, it was observed that the variance within two clusters was higher compared to the other four clusters. The lower silhouette value (0.32) and considering the label, the decision was made not to include the analysis done with this number of clusters in the report.
+
+#### k=2
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grupward2 <- cutree(hc_e, k = 2)
+table(grupward2)
+```
+
+There are 180 observations in cluster 1, 389 observations in cluster 2.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e, k = 2, 
+          cex = 0.5, 
+          color_labels_by_k = TRUE, 
+          rect = TRUE )
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = pcadata, cluster = grupward2),
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+When the cluster graph is analyzed, overlap can be observed. It can be seen that the separation occurs only in PC1. While the variance in the first cluster shown in red is high, the variance in the second cluster shown in blue is low.
+
+```{r include=FALSE}
+hc_dataward2 <- eclust(pcadata, "hclust", k = 2, hc_metric = "euclidean",hc_method = "ward.D2", graph = TRUE)
+
+```
+
+```{r include=FALSE}
+fviz_silhouette(hc_dataward2, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silward2 <- hc_dataward2$silinfo$widths[, 1:3]
+neg_silward2_index <- which(silward2[, 'sil_width']<0)
+silward2[neg_silward2_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+ward2_stats <- cluster.stats(dist(pcadata), hc_dataward2$cluster)
+ward2_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, hc_dataward2$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, hc_dataward2$cluster)
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupward2)$corrected.rand
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupward2)$vi
+```
+
+#### k=3
+
+```{r echo=FALSE}
+grupward3 <- cutree(hc_e, k = 3)
+table(grupward3)
+```
+
+There are 104 observations in cluster 1, 76 observations in cluster 2, and 389 observations in cluster 3.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e, k = 3, 
+          cex = 0.5, 
+          color_labels_by_k = TRUE, 
+          rect = TRUE )
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = pcadata, cluster = grupward3),
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+When the cluster graph is analyzed, overlap can be observed. It can be seen that the separation occurs only in both PC1 and PC2. While the variance in the first cluster shown in red is high, the variance in the second cluster shown in green is low.
+
+```{r include=FALSE}
+
+hc_dataward3 <- eclust(pcadata, "hclust", k = 3, hc_metric = "euclidean",hc_method = "ward.D2", graph = TRUE)
+```
+
+```{r include=FALSE}
+fviz_silhouette(hc_dataward3, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silward3 <- hc_dataward3$silinfo$widths[, 1:3]
+neg_silward3_index <- which(silward3[, 'sil_width']<0)
+silward3[neg_silward3_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+ward3_stats <- cluster.stats(dist(pcadata), hc_dataward3$cluster)
+ward3_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, hc_dataward3$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, hc_dataward3$cluster)
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupward3)$corrected.rand
+
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupward3)$vi
+```
+
+### Average Linkage Method
+
+The average linkage method (also known as UPGMA) is an agglomerative linkage method used in hierarchical clustering. It is based on the idea of minimizing the average distance between observations in the two clusters being merged. The average linkage method is a measure of the dissimilarity between two clusters, defined as the average distance between the points in one cluster and the points in the other.[21], [22]
+
+The steps to perform hierarchical clustering using average linkage method are:
+
+Start with each observation as a separate cluster Compute the distance matrix between all pairs of clusters. Merge the two clusters that have the minimum average distance between their observations and form a new cluster. Repeat steps 2 and 3 until all observations are in the same cluster. The average linkage method is sensitive to the scale of the variables, so it's recommended to standardize the variables before applying the method. Average linkage method tends to create elongated and non-compact clusters, and it's more efficient for handling datasets with small number of observations and variables.
+
+#### Cophenetic Distance
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+hc_e2 <- hclust(d=dist_euc, method="average")
+fviz_dend(hc_e2,cex=.5) 
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+hc_m2 <- hclust(d=dist_man, method="average")
+fviz_dend(hc_m2,cex=.5) 
+```
+
+```{r echo=FALSE}
+coph_e2 <- cophenetic(hc_e2)
+cor(dist_euc,coph_e2)
+```
+
+```{r echo=FALSE}
+coph_m2 <- cophenetic(hc_m2)
+cor(dist_man,coph_m2)
+```
+
+When the correlation between Cophenetic and distance matrix is examined, it is observed that hierarchical clustering with euclidean distance gives better results.
+
+#### Determination of the Cluster Number k
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+nbaverage <- NbClust(pcadata , distance = "euclidean", min.nc = 2,
+              max.nc = 9, method = "average")
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(nbaverage) + labs(subtitle ="NbClust Grafiği")
+```
+
+When the output of the NbClust package was analyzed, it was found that 9 methods suggested 2 clusters and 6 methods suggested 3 clusters. According to majority rule, the best number of cluster is 2. However, both 2 and 3 clusters will be examined for k-means, k-medoids, and hierarchical clustering alhorithms.
+
+In the clustering with 7 clusters, there was a significant difference in the number of cluster elements. Although some clusters had a very small number of elements (3), others had a large number of elements (305). The within-cluster variances were also found to be imbalanced. Based on the average Silhouette value (0.41) and other metrics, it was decided not to include it in the report.
+
+#### k=2
+
+```{r echo=FALSE}
+grupav2 <- cutree(hc_e2, k = 2)
+
+table(grupav2)
+
+```
+
+There are 23 observations in cluster 1, 546 observations in cluster 2. It can easily be seen that clusters are unbalanced.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e2, k = 2, 
+          cex = 0.5, 
+          color_labels_by_k = TRUE, 
+          rect = TRUE )
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = pcadata, cluster = grupav2),
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+When the cluster graph is analyzed, overlap can be observed. It can be seen that the separation occurs only in PC1. While the variance in the second cluster shown in green is high, the variance in the first cluster shown in blue is low.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_datav2 <- eclust(pcadata, "hclust", k = 2, hc_metric = "euclidean",hc_method = "average", graph = TRUE)
+```
+
+```{r include=FALSE}
+fviz_silhouette(hc_datav2, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silav2 <- hc_datav2$silinfo$widths[, 1:3]
+neg_silav2_index <- which(silav2[, 'sil_width']<0)
+silav2[neg_silav2_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+av2_stats <- cluster.stats(dist(pcadata), hc_datav2$cluster)
+av2_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, hc_datav2$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+```{r include=FALSE}
+table(wdbc$Diagnosis, hc_datav2$cluster)
+
+```
+
+```{r include=FALSE}
+cluster.stats(d = dist(data),diagnosis, grupav2)$corrected.rand
+```
+
+```{r include=FALSE}
+
+cluster.stats(d = dist(data),diagnosis, grupav2)$vi
+```
+
+#### k=3
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grupav3 <- cutree(hc_e2, k = 3)
+
+table(grupav3)
+```
+
+There are 23 observations in cluster 1, 541 observations in cluster 2, and 5 observations in cluster 3. It can easily be seen that clusters are unbalanced.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e2, k = 3, 
+          cex = 0.5, 
+          color_labels_by_k = TRUE, 
+          rect = TRUE )
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = pcadata, cluster = grupav3),
+             ellipse.type = "convex", 
+             repel = TRUE, 
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+When the cluster graph is analyzed, overlap can be observed. It can be seen that the separation occurs only in both PC1 nad PC2. While the variance in the second cluster shown in green is high, the variance in the third cluster shown in blue is low.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+hc_datav3 <- eclust(pcadata, "hclust", k = 3, hc_metric = "euclidean",hc_method = "average", graph = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+fviz_silhouette(hc_datav3, palette = "jco",
+                ggtheme = theme_classic())
+```
+
+```{r include=FALSE}
+silav5 <- hc_datav3$silinfo$widths[, 1:3]
+neg_silav5_index <- which(silav5[, 'sil_width']<0)
+silav5[neg_silav5_index, , drop = FALSE]
+```
+
+```{r include=FALSE}
+av5_stats <- cluster.stats(dist(pcadata), hc_datav3$cluster)
+av5_stats$dunn
+```
+
+```{r include=FALSE}
+connectivity(distance = NULL, hc_datav3$cluster, Data = pcadata, neighbSize = 20,
+             method = "euclidean")
+```
+
+## Model Temelli Kümeleme
+
+Model-based clustering is a method of clustering in which a probabilistic model is fit to the data, and the clusters are defined as the parameters of the model. The main idea behind model-based clustering is to assume that the data is generated by a certain probability distribution, and the clusters correspond to different modes of that distribution.
+
+There are several types of model-based clustering methods such as:
+
+1.  Gaussian Mixture Model (GMM): assumes that the data is generated by a mixture of Gaussian distributions, and estimates the parameters of the distributions, such as means and covariances, to define the clusters. I will use this version in this analysis.
+
+2.  Latent Dirichlet Allocation (LDA): a generative probabilistic model used to classify text in natural language processing and information retrieval. It assumes that each document is a mixture of topics and each topic is a mixture of words.
+
+3.  Hidden Markov Model (HMM): a statistical model used to predict a sequence of hidden states from a sequence of observations. It can be used for clustering sequences of data.
+
+Model-based clustering methods have some advantages over traditional clustering methods, such as the ability to model complex data distributions and handle missing data. However, it's also sensitive to the initial conditions and the number of clusters and it's computationally expensive for large datasets.
+
+NOTES:
+
+-   The model-based clustering performs the clustering process by making estimates using the EM algorithm. Each cluster, centered around the mean, becomes more dense with increasing proximity to the mean. The argument G in the function allows for modification to determine the number of clusters, ranging from 1 to 9. Each value was tested, but it was concluded that the best result was obtained with a G value of two.
+
+-   Analyses for G values of three showed that the first two cluster sizes were close to each other (235-212), but the third cluster size was smaller (122). The best model was found to be the VII model, which meant that the volume, shape, and orientation were different. This method was not included in the report because the number of uncertain observations was high, and the average Silhouette value was lower (0.27) as shown in the uncertainty graph.
+
+-   Analyses for G values of four showed that the cluster sizes were 52, 158, 213, and 146, respectively. The best model was found to be the VII model, which meant that the volume, shape, and orientation were different. This method was not included in the report because the number of uncertain observations was high and the average Silhouette value was lower (0.33) as shown in the uncertainty graph.
+
+-   Analyses for G values of five showed that the cluster sizes were 29, 112, 187, 114, and 127, respectively. The best model was found to be the VII model, which meant that the volume, shape, and orientation were different. This method was not included in the report because the number of uncertain observations was high and the average Silhouette value was lower (0.32) as shown in the uncertainty graph.
+
+```{r}
+mc <- Mclust(pcadata, G=2)
+summary(mc)
+```
+
+Observation numbers for each clusters is as follows: C1 : 253 C2 : 316
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_mclust(mc, "BIC", palette = "jco")
+```
+
+The best model is the VVI parameter. VVV means equal orientation, with varying volume and shape.
+
+```{r}
+fviz_mclust(mc, "classification", geom = "point",
+            pointsize = 1.5, palette = "jco")
+```
+
+When the clustering graph is examined, it is observed that there are no overlaps. Blue dots are easily visible on the far right of the PC1 length. This can be interpreted as an interesting result. Separation occurred only in the PC1 dimension.
+
+```{r message=FALSE, warning=FALSE}
+fviz_mclust(mc, "uncertainty", palette = "jco",pos = FALSE)
+```
+
+Observations with larger points in the uncertainty graph indicate that the clustering results are more uncertain. It can be observed that uncertainty increases between two clusters which is not suprising.
+
+## Density-Based Clustering
+
+Density-based clustering is a type of clustering algorithm that groups together data points that are closely packed together, while separating those that are more sparsely distributed. The main idea behind density-based clustering is to identify regions in the feature space where the data points are dense, and then to extract clusters based on these regions. [25]
+
+One commonly used density-based clustering algorithm is DBSCAN (Density-Based Spatial Clustering of Applications with Noise). DBSCAN groups together data points that are close to each other based on a distance measure and a density threshold. It defines clusters as dense regions of points that are separated from other dense regions by regions of lower point density. [26]
+
+Another example of density-based clustering is HDBSCAN (Hierarchical Density-Based Spatial Clustering of Applications with Noise) which is an extension of DBSCAN algorithm, it can discover clusters of varying densities and shapes, and it can also discover clusters with different numbers of points, and it is less sensitive to parameter tuning.
+
+Density-based clustering is useful for data sets that contain clusters of different shapes and sizes, and for data sets with noise and outliers.
+
+In density-based clustering, the number of clusters does not need to be predetermined, but the values of MinPts and eps do. The eps parameter defines the radius of the neighbors around a point x. This is called the epsilon neighborhood of x. The MinPts parameter is the minimum number of neighbors within the "eps" radius. KNN distplot can be used to determine these values.
+
+### kNN Distplot
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+kNNdistplot(pcadata, k = 10)
+abline(h = 1, lty = 2)
+abline(h = 0.6, lty = 2)
+```
+
+k stands for MinPts. After several trials, 5 was decided upon. When analyzing the kNNdisplot, just like the Elbow Method, the point where the line makes an "elbow" should be determined. This point should be chosen as the eps value. After various trials, the most appropriate value was decided to be 0.6.
+
+***NOTES:***
+
+In the analysis with minPts 10, eps 1, the number of clusters was found to be one. Since one cluster means no cluster, it was decided not to include it in the report.
+
+The analysis with MinPts 10, eps 0.8 gave the same result as the analysis with eps 1, so it was decided not to include it in the report.
+
+In the analysis with minPts 5, eps 0.6, the number of clusters was two. While there were 513 observations in the first cluster, the number of observations in the second cluster was 7 and the variance differences caused by this imbalance caused suspicion. For this reason, it was not included in the report.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+db <- fpc::dbscan(pcadata, eps = 0.6, MinPts = 10)
+print(db)
+```
+
+Density-based clustering divided the dataset into two clusters. The output shows a total of 96 noise values. There are 58 border points in the first cluster and 27 in the second cluster. There are 49 seed points in the first cluster and 339 seed points in the second cluster.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(db, data = pcadata, stand = FALSE,
+             ellipse = FALSE, show.clust.cent = FALSE,
+             geom = "point",palette = "jco", ggtheme = theme_classic())
+```
+
+When the graph is examined, it can be seen that the element difference between the clusters is small. The excess of noise values is also noteworthy.
+
+# Cluster Validation
+
+Before sharing the validity measurements made after clustering, I wanted use the clValid function in the clValid package. This function performs clustering with the given clustering methods and recommends the most appropriate clustering algorithm and number of clusters. This function will be used for three validity criteria. These criteria are internal and external cluster validity and clustering stability.
+
+## clValid
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+clmethods <- c("kmeans","pam","hierarchical", "model")
+intern <- clValid(pcadata, nClust = 2:6,
+                  clMethods = clmethods, validation = "internal")
+summary(intern)
+```
+
+Internal clustering validity criteria includes Connectivity, Dunn and Silhouette criteria. The clValid function indicates hierarchical clustering as the most appropriate algorithm and 2 clusters as the optimal number of clusters.
+
+## All Metrics
+
+```{r}
+clustervalid <- data.frame( Clustering.Algorithm = c("2k-means", "3k-means", "2k-medoids", "3k-medoids", "Ward.D2-2", "Ward.D2-3", "Average-5", "Average-2", "Model.Based", "Density.Based"),
+                               Cluster.Number = c(2,3,2,3,2,3,5,2,2,3),
+                               Overlap = c("little", "much", "little", "much", "little", "much", "much", "little", "none", NA),
+                               Negative.Silhouette.Number = c(10,9,26,47,24,30,52,29, NA, NA),
+                               Average.Silhouette.Number = c(0.49, 0.44, 0.48, 0.36,0.48,0.48,0.42,0.54, 0.41,0.14),
+                               Dunn.Index = c(0.005,0.011, 0.013, 0.004, 0.02, 0.035, 0.029, 0.063, 0.002, 0.019),
+                               Connectivity = c(64.96, 87.85, 50.08, 109.02, 40.70, 60.24, 68.88, 20.61, 83.61, 117.14),
+                               Rand = c(0.64, 0.49, 0.72, 0.39, 0.56, 0.51, 0.44, 0.60, 0.53, 0.09),
+                               VI = c(0.56, 0.93, 0.49, 1.013189, 0.70, 0.86, 0.80, 0.74, 0.75, NA),
+                            Label = c(55,146,42,194,70,127,189,111,77,142) 
+                            )
+clustervalid
+```
+
+## Determining the best Clustering Algorithm
+
+### Silhouette
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(clustervalid, aes(x = Average.Silhouette.Number, y = Clustering.Algorithm )) +
+  geom_bar(stat = "identity", width = 0.1, color="burlywood4", fill = "burlywood") +
+  theme_minimal()+
+  labs(title =  "Average Silhouette Scores")+
+  xlab("Average Silhouette Score") +
+  ylab("Clustering Algorithm") +
+  theme(axis.text.y  = element_text(angle=360, vjust=.5, hjust=1))
+```
+
+The clustering with the highest average silhouette value is the Average linkage method in Hierarchical Clustering. The number of cluster is two.
+
+### Dunn
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(clustervalid, aes(x = Dunn.Index, y = Clustering.Algorithm ))  +
+  geom_bar(stat = "identity", width = 0.1, color="burlywood4", fill = "burlywood") +
+  theme_minimal()+
+  labs(title =  "Average Silhouette Scores")+
+  xlab("Dunn Score") +
+  ylab("Clustering Algorithm") +
+  theme(axis.text.y  = element_text(angle=360, vjust=.5, hjust=1))
+```
+
+The clustering with the highest Dunn value is the Average linkage method in hierarchical clustering. The number of clusters is two.
+
+### Connectivity
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(clustervalid, aes(x = Connectivity, y = Clustering.Algorithm ))  +
+  geom_bar(stat = "identity", width = 0.1, color="burlywood4", fill = "burlywood") +
+  theme_minimal()+
+  labs(title =  "Connectivity Scores")+
+  xlab("Connectivity Score") +
+  ylab("Clustering Algorithm") +
+  theme(axis.text.y  = element_text(angle=360, vjust=.5, hjust=1))
+
+```
+
+Connectivity takes values from 0 to infinity. It should be as small as possible. The clustering with the highest connectivity value is the Average linkage method in hierarchical clustering. The number of clusters is two.
+
+### Rand
+
+```{r echo=FALSE, message=TRUE, warning=TRUE}
+ggplot(clustervalid, aes(x = Rand, y = Clustering.Algorithm )) +
+  geom_bar(stat = "identity", width = 0.1, color="burlywood4", fill = "burlywood") +
+  theme_minimal()+
+  labs(title =  "Corrected Rand Scores")+
+  xlab("Corrected Rand Score") +
+  ylab("Clustering Algorithm") +
+  theme(axis.text.y  = element_text(angle=360, vjust=.5, hjust=1))
+```
+
+The Rand index takes values between -1 (no fit) and 1 (perfect fit). The value closest to 1 is the best value. When the Rand values are analyzed for all the methods tested, the K-Medoids algorithm has the closest value to one. The number of clusters appeared to be 2.
+
+### VI Index
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(clustervalid, aes(x = VI , y = Clustering.Algorithm )) +
+  geom_bar(stat = "identity", width = 0.1, color="burlywood4", fill = "burlywood") +
+  theme_minimal()+
+  labs(title =  "Meila's VI Scores")+
+  xlab("Meila's VI Score") +
+  ylab("Clustering Algorithm") +
+  theme(axis.text.y  = element_text(angle=360, vjust=.5, hjust=1))
+```
+
+The VI index takes values between -1 (no fit) and 1 (perfect fit). The value closest to 1 is the best value. When all Melia change values are analyzed, k-medoids with 2 clusters is the best.
+
+### Label Karşılaştırması
+
+```{r}
+ggplot(clustervalid, aes(x = Label , y = Clustering.Algorithm )) +
+  geom_bar(stat = "identity", width = 0.1, color="burlywood4", fill = "burlywood") +
+  theme_minimal()+
+  labs(title =  "Label")+
+  xlab("Label") +
+  ylab("Clustering Algorithm") +
+  theme(axis.text.y  = element_text(angle=360, vjust=.5, hjust=1))
+```
+
+The graph above shows the difference between the label frequency and the clustering frequencies. The clustering algorithm with the smallest difference is the one that clusters closest to the label. For this reason, K - Medoids is seen as the most appropriate algorithm. The number of clusters is seen as 2.
+
+## Conclusion
+
+According to the recommendations of Clvalid and all other metrics:
+
+-   3 metrics with 2 clusters, hierarchical clustering with average linkage,
+-   2 metrics 2 cluster K - Medoids,
+-   1 metric proposed the Density Based Clustering algorithm.
+
+Under normal circumstances, the most appropriate clustering method should have been hierarchical and the optimal number of clusters should have been 2. However, in this data set and this analysis, considering the differences in cluster elements, the extreme differences in intra-cluster variances, and the fact that the labels are known; it is thought that it is more appropriate to choose the algorithm with the least frequency difference between the label. In other words, **K - Medoids** was selected as the optimal clustering algorithm and **2** as the optimal number of clusters. K - Medoids made only 42 false clusters out of 569 observations. Considering that it clustered the data with an error rate of 7%, it can be said that it is a very successful clustering algorithm.
+
+# Clustering Results
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+final_data <- cbind(data, cluster= pam_data$clustering )
+```
+
+The means of each variable were compared with the cluster averages. The table below is drawn to illustrate this comparison.
+
+| Variables         | First Cluster | Second Cluster |
+|-------------------|---------------|----------------|
+| Radius            | High          | Average        |
+| Texture           | High          | Average        |
+| Perimeter         | High          | Low            |
+| Area              | High          | Low            |
+| Smoothness        | High          | Low            |
+| Compactness       | High          | Low            |
+| Concavity         | High          | Low            |
+| Concave Points    | High          | Average        |
+| Symmetry          | High          | Average        |
+| Fractal Dimension | Average       | Average        |
+
+: Clustering Results
+
+## Label Comparision
+
+```{r echo=FALSE}
+describeBy(wdbc[3:10], group = wdbc[2])
+```
+
+When the descriptive statistics values extracted according to the M (malignant tumor) and B (benign tumor) labels are examined, it is noticed that the averages of the observations in the M label in the variables are above the average. Considering that the cluster in which the variables are above the average in the clustering results is the first cluster; it can be said that the first cluster refers to malignant tumor and the second cluster refers to benign tumor.
+
+## Visualization
+
+In order not to extend the report further, two variables represented by PC1 and PC2 were selected and two graphs were drawn for each cluster in which the relationship between these variables was analyzed. While drawing the graphs, the cluster names 1 and 2 were changed to M (Malignant Tumor) and B (Benign Tumor) according to the results of the label comparison.
+
+```{r}
+final_data <- mutate(final_data, cluster = ifelse(cluster == 1,"M", "B"))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(final_data, aes(area, radius))+
+  geom_point(color = "goldenrod1") +
+  facet_grid(rows = vars(cluster))+
+  theme_classic2()
+```
+
+In the graph for M (Malignant Tumor), a positive relationship is observed starting from Radius 8, Area 250 band and reaching the maximum values of both values. For B (Benign Tumor), a positive relationship is observed in both variables starting at 0 and ending at 1000 for Area and 17 for Radius. From this graph, it can be inferred that the areas of the nucleus of malignant tumors are in a wider range, while the areas of benign tumors do not grow much. The radius of benign tumors does not increase beyond 17.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(final_data, aes(fractal.dimension, smoothness))+
+  geom_point(color = "goldenrod1") +
+  facet_grid(rows = vars(cluster))+
+  theme_classic2()
+```
+
+For cluster B (Benign Tumor), both the Fractal dimension variable and the Smoothness variable have a wide range. For cluster M (Malignant Tumor), both the Fractal dimension variable and Smoothness have a wide range. This may be due to the fact that separation only occurs in the PC1 variable. From this, it can be inferred that it may be misleading to make comments according to the variables in PC2 (Fractal Dimension, Smoothness, Compactness, Symmetry) in the analyses to be made to distinguish between Benign or Malignant Tumor.
+
+**References**
+
+[1] Bryant, F. B., & Yarnold, P. R. (1995). Principal-components analysis and exploratory and confirmatory factor analysis.
+
+[2] James, G., Witten, D., Hastie, T., & Tibshirani, R. (2013). An introduction to statistical learning (Vol. 112, p. 18). New York: springer.
+
+[3] Ben-Hur, Asa, and Isabelle Guyon. Detecting stable clusters using principal component analysis. Functional genomics. Humana press, 159-182, 2003.
+
+[4] Ding, Chris, and Xiaofeng He. K-means clustering via principal component analysis. Proceedings of the twenty-first international conference on Machine learning. 2004.
+
+[5] Kassambara, Alboukadel. Practical guide to cluster analysis in R: Unsupervised machine learning. Vol. 1. Sthda, 2017.
+
+[6] Hopkins, J. W., & Gridgeman, N. T. (1955). Comparative sensitivity of pair and triad flavor intensity difference tests. Biometrics, 11(1), 63-68.
+
+[7] Hartigan, John A., Manchek A. Wong. Algorithm AS 136: A k-means clustering algorithm. Journal of the royal statistical society. series c (applied statistics) 28., 100-108, 1979
+
+[8] Kassambara, Alboukadel. Practical guide to cluster analysis in R: Unsupervised machine learning. Vol. 1. Sthda, 2017.
+
+[9] James, G., Witten, D., Hastie, T., & Tibshirani, R. (2013). An introduction to statistical learning (Vol. 112, p. 18). New York: springer.
+
+[10] Steinley, D., & Brusco, M. J. (2011). Choosing the number of clusters in Κ-means clustering. Psychological methods, 16(3), 285.
+
+[11] Halkidi, Maria, Yannis Batistakis, and Michalis Vazirgiannis. "On clustering validation techniques." Journal of intelligent information systems 17 (2001): 107-145.
+
+[12] Rousseeuw, Peter J. Silhouettes: a graphical aid to the interpretation and validation of cluster analysis.Journal of computational and applied mathematics, 1987, 20: 53-65.
+
+[13] Halkidi, M., Batistakis, Y., & Vazirgiannis, M. (2001). On clustering validation techniques. Journal of intelligent information systems, 17, 107-145.
+
+[14] Tibshirani, R., Walther, G., & Hastie, T. (2001). Estimating the number of clusters in a data set via the gap statistic. Journal of the Royal Statistical Society: Series B (Statistical Methodology), 63(2), 411-423.
+
+[15] Kaufman, L., & Rousseeuw, P. (1987). Clustering by means of medoids. Statistical Data Analysis Based on the L1-Norm and Related Methods, Y. Dodge Ed.
+
+[16] Kaufman, L., & Rousseeuw, P. J. (2009). Finding groups in data: an introduction to cluster analysis. John Wiley & Sons.
+
+[17] Ward Jr, J. H. (1963). Hierarchical grouping to optimize an objective function. Journal of the American statistical association, 58(301), 236-244.
+
+[18] Roux, M. (2015). A comparative study of divisive hierarchical clustering algorithms. arXiv preprint arXiv:1506.08977.
+
+[19] Kassambara, Alboukadel. Practical guide to cluster analysis in R: Unsupervised machine learning. Vol. 1. Sthda, 2017.
+
+[20] Triayudi, A., & Fitri, I. (2018). Comparison of parameter-free agglomerative hierarchical clustering methods. ICIC Express Letters, 12(10), 973-980.
+
+[21] Murtagh, F., & Contreras, P. (2012). Algorithms for hierarchical clustering: an overview. Wiley Interdisciplinary Reviews: Data Mining and Knowledge Discovery, 2(1), 86-97.
+
+[22] Kassambara, Alboukadel. Practical guide to cluster analysis in R: Unsupervised machine learning. Vol. 1. Sthda, 2017.
+
+[23] McNicholas, P. D. (2016). Model-based clustering. Journal of Classification, 33, 331-373.
+
+[24] Kassambara, Alboukadel. Practical guide to cluster analysis in R: Unsupervised machine learning. Vol. 1. Sthda, 2017.
+
+[25] Kriegel, H. P., Kröger, P., Sander, J., & Zimek, A. (2011). Density‐based clustering. Wiley interdisciplinary reviews: data mining and knowledge discovery, 1(3), 231-240.
+
+[26] Bäcklund, H., Hedblom, A., & Neijman, N. (2011). A density-based spatial clustering of application with noise. Data Mining TNM033, 33, 11-30.
