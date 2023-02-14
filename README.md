@@ -75,7 +75,7 @@ In the graph for M (Malignant Tumor), a positive relationship is observed starti
 
 ![Variables from PC2](plots/000010.png)
 
-At the end of the analysis, it is concluded that ror cluster B (Benign Tumor), both the Fractal dimension variable and the Smoothness variable have a wide range. For cluster M (Malignant Tumor), both the Fractal dimension variable and Smoothness have a wide range. This may be due to the fact that separation only occurs in the PC1 variable. From this, it can be inferred that it may be misleading to make comments according to the variables in PC2 (Fractal Dimension, Smoothness, Compactness, Symmetry) in the analyses to be made to distinguish between Benign or Malignant Tumor.
+At the end of the analysis, it is concluded that for cluster B (Benign Tumor), both the Fractal dimension variable and the Smoothness variable have a wide range. For cluster M (Malignant Tumor), both the Fractal dimension variable and Smoothness have a wide range. This may be due to the fact that separation only occurs in the PC1 variable. From this, it can be inferred that it may be misleading to make comments according to the variables in PC2 (Fractal Dimension, Smoothness, Compactness, Symmetry) in the analyses to be made to distinguish between Benign or Malignant Tumor.
 
 
 ### Theoretical Information
