@@ -1108,7 +1108,7 @@ abline(h = 0.6, lty = 2)
 
 k stands for MinPts. After several trials, 5 was decided upon. When analyzing the kNNdisplot, just like the Elbow Method, the point where the line makes an "elbow" should be determined. This point should be chosen as the eps value. After various trials, the most appropriate value was decided to be 0.6.
 
-***NOTES:***
+**NOTES:**
 
 In the analysis with minPts 10, eps 1, the number of clusters was found to be one. Since one cluster means no cluster, it was decided not to include it in the report.
 
