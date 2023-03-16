@@ -4,7 +4,7 @@ Breast cancer is a type of cancer that forms in the breast tissue. It usually be
 
 ### Aim of the Project
 
-In this project, I compared k-means, k-medoids(pam), hierarchical clustering, model based clustering, and density based clustering on the same data set to se which one gives better results. Both [Turkish](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/TR/Denetimsiz_Ogrenme%5BRapor%5D/denetimsizistatistikselogrenme.Rmd) and [English](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/ENG/Unsupervised_Learning%5BReport%5D/report-unsupervisedlearning.Rmd) .Rmd and .R files, and Python notebook are available.
+In this project, I compared k-means, k-medoids(pam), hierarchical clustering, model based clustering, and density based clustering on the same data set to se which one gives better results. Both [Turkish](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/TR/Denetimsiz_Ogrenme%5BRapor%5D/denetimsizistatistikselogrenme.Rmd) and [English](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/ENG/Unsupervised_Learning%5BReport%5D/report-unsupervisedlearning.Rmd) .Rmd and .R files, and [Python notebook](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/Python/unsupervisedlearning.ipynb) are available.
 
 ### Dataset Information
 
@@ -76,7 +76,6 @@ In the graph for M (Malignant Tumor), a positive relationship is observed starti
 ![Variables from PC2](plots/000010.png)
 
 At the end of the analysis, it is concluded that for cluster B (Benign Tumor), both the Fractal dimension variable and the Smoothness variable have a wide range. For cluster M (Malignant Tumor), both the Fractal dimension variable and Smoothness have a wide range. This may be due to the fact that separation only occurs in the PC1 variable. From this, it can be inferred that it may be misleading to make comments according to the variables in PC2 (Fractal Dimension, Smoothness, Compactness, Symmetry) in the analyses to be made to distinguish between Benign or Malignant Tumor.
-
 
 ### Theoretical Information
 
