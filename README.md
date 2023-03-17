@@ -4,7 +4,7 @@ Breast cancer is a type of cancer that forms in the breast tissue. It usually be
 
 ### Aim of the Project
 
-In this project, I compared k-means, k-medoids(pam), hierarchical clustering, model based clustering, and density based clustering on the same data set to se which one gives better results. Both [Turkish](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/TR/Denetimsiz_Ogrenme%5BRapor%5D/denetimsizistatistikselogrenme.Rmd) and [English](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/ENG/Unsupervised_Learning%5BReport%5D/report-unsupervisedlearning.Rmd) Rmarkdown reports, Rscript files, and [Python notebook](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/Python/unsupervisedlearning.ipynb) are available.
+In this project, I compared k-means, k-medoids(pam), hierarchical clustering, model based clustering, and density based clustering on the same data set to se which one gives better results. Both [Turkish](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/TR/Denetimsiz_Ogrenme%5BRapor%5D/denetimsizistatistikselogrenme.Rmd) and [English](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/ENG/Unsupervised_Learning%5BReport%5D/report-unsupervisedlearning.Rmd) Rmarkdown reports, Rscript files, and English [Python notebook](https://github.com/ozturkfemre/unsupervisedlearning/blob/main/Python/unsupervisedlearning.ipynb) are available.
 
 ### Dataset Information
 
